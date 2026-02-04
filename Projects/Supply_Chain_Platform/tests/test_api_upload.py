@@ -334,3 +334,161 @@ class TestSupportedExtensions:
     def test_xls_supported(self) -> None:
         """Test that .xls is in supported extensions."""
         assert ".xls" in SUPPORTED_EXTENSIONS
+
+
+class TestSkuValidation:
+    """Tests for SKU validation in upload endpoint."""
+
+    def test_upload_with_valid_skus(self, override_db: None) -> None:
+        """Test upload where all SKUs are valid."""
+        csv_content = b"Date,SKU,Qty Sold\n2026-01-15,UFBub250,24\n2026-01-16,UFRos250,12"
+
+        client = TestClient(app)
+        response = client.post(
+            "/upload",
+            files={"file": ("report.csv", BytesIO(csv_content), "text/csv")},
+            data={"distributor": "RNDC"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        result = data["result"]
+        assert result["success_count"] == 2
+        assert result["error_count"] == 0
+
+    def test_upload_with_invalid_skus_flagged(self, override_db: None) -> None:
+        """Test upload where invalid SKUs are flagged with errors."""
+        csv_content = b"Date,SKU,Qty Sold\n2026-01-15,UFBub250,24\n2026-01-16,INVALID_SKU,12\n2026-01-17,UFRos250,36"
+
+        client = TestClient(app)
+        response = client.post(
+            "/upload",
+            files={"file": ("report.csv", BytesIO(csv_content), "text/csv")},
+            data={"distributor": "RNDC"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        result = data["result"]
+        # 2 valid SKUs, 1 invalid
+        assert result["success_count"] == 2
+        assert result["error_count"] == 1
+
+        # Check error message
+        errors = result["errors"]
+        assert len(errors) == 1
+        assert errors[0]["field"] == "sku"
+        assert "Unknown SKU" in errors[0]["message"]
+        assert "INVALID_SKU" in errors[0]["message"]
+
+    def test_upload_with_sku_validation_disabled(self, override_db: None) -> None:
+        """Test upload with SKU validation disabled."""
+        csv_content = b"Date,SKU,Qty Sold\n2026-01-15,CUSTOM_SKU1,24\n2026-01-16,CUSTOM_SKU2,12"
+
+        client = TestClient(app)
+        response = client.post(
+            "/upload",
+            files={"file": ("report.csv", BytesIO(csv_content), "text/csv")},
+            data={"distributor": "RNDC", "validate_skus": "false"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        result = data["result"]
+        # All rows should be valid since validation is disabled
+        assert result["success_count"] == 2
+        assert result["error_count"] == 0
+
+    def test_upload_all_invalid_skus(self, override_db: None) -> None:
+        """Test upload where all SKUs are invalid."""
+        csv_content = b"Date,SKU,Qty Sold\n2026-01-15,BAD1,24\n2026-01-16,BAD2,12"
+
+        client = TestClient(app)
+        response = client.post(
+            "/upload",
+            files={"file": ("report.csv", BytesIO(csv_content), "text/csv")},
+            data={"distributor": "RNDC"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        result = data["result"]
+        assert result["success_count"] == 0
+        assert result["error_count"] == 2
+        assert "errors" in data["message"].lower() or result["error_count"] > 0
+
+    def test_upload_southern_glazers_with_sku_validation(self, override_db: None) -> None:
+        """Test SKU validation for Southern Glazers distributor."""
+        csv_content = b"Ship Date,Item Code,Bottles\n01/15/2026,UFRos250,120\n01/16/2026,BAD_SKU,60"
+
+        client = TestClient(app)
+        response = client.post(
+            "/upload",
+            files={"file": ("report.csv", BytesIO(csv_content), "text/csv")},
+            data={"distributor": "Southern Glazers"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        result = data["result"]
+        assert result["success_count"] == 1
+        assert result["error_count"] == 1
+
+    def test_upload_winebow_with_sku_validation(self, override_db: None) -> None:
+        """Test SKU validation for Winebow distributor."""
+        csv_content = b"transaction_date,product_code,quantity\n2026-01-15,UFRed250,48\n2026-01-16,UNKNOWN,24"
+
+        client = TestClient(app)
+        response = client.post(
+            "/upload",
+            files={"file": ("report.csv", BytesIO(csv_content), "text/csv")},
+            data={"distributor": "Winebow"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        result = data["result"]
+        assert result["success_count"] == 1
+        assert result["error_count"] == 1
+
+    def test_sku_validation_preserves_parsing_errors(self, override_db: None) -> None:
+        """Test that parsing errors are preserved along with SKU validation errors."""
+        # Row 2: valid SKU, Row 3: invalid date, Row 4: invalid SKU
+        csv_content = b"Date,SKU,Qty Sold\n2026-01-15,UFBub250,24\nbad-date,UFRos250,12\n2026-01-17,INVALID,36"
+
+        client = TestClient(app)
+        response = client.post(
+            "/upload",
+            files={"file": ("report.csv", BytesIO(csv_content), "text/csv")},
+            data={"distributor": "RNDC"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        result = data["result"]
+        # 1 valid row (UFBub250), 2 errors (bad date + invalid SKU)
+        assert result["success_count"] == 1
+        assert result["error_count"] == 2
+
+        # Check that we have both types of errors
+        error_messages = [e["message"] for e in result["errors"]]
+        assert any("date" in msg.lower() for msg in error_messages)
+        assert any("Unknown SKU" in msg for msg in error_messages)
+
+    def test_valid_skus_constant_used(self, override_db: None) -> None:
+        """Test that all 4 Une Femme SKUs are accepted."""
+        # Test all 4 valid SKUs
+        csv_content = b"Date,SKU,Qty Sold\n2026-01-15,UFBub250,24\n2026-01-16,UFRos250,12\n2026-01-17,UFRed250,36\n2026-01-18,UFCha250,48"
+
+        client = TestClient(app)
+        response = client.post(
+            "/upload",
+            files={"file": ("report.csv", BytesIO(csv_content), "text/csv")},
+            data={"distributor": "RNDC"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        result = data["result"]
+        assert result["success_count"] == 4
+        assert result["error_count"] == 0

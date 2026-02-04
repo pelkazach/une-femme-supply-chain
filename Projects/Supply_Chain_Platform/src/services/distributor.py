@@ -1342,3 +1342,128 @@ def parse_winebow_report(content: bytes, extension: str) -> ParseResult:
             ],
             total_rows=0,
         )
+
+
+# Default valid SKUs for Une Femme products
+VALID_SKUS = {"UFBub250", "UFRos250", "UFRed250", "UFCha250"}
+
+
+@dataclass
+class ValidationResult:
+    """Result of SKU validation on parsed rows."""
+
+    valid_rows: list[ParsedRow]
+    invalid_rows: list[tuple[ParsedRow, RowError]]
+    original_errors: list[RowError]
+
+    @property
+    def all_errors(self) -> list[RowError]:
+        """All errors including original parsing errors and validation errors."""
+        validation_errors = [err for _, err in self.invalid_rows]
+        return self.original_errors + validation_errors
+
+    @property
+    def valid_count(self) -> int:
+        """Number of rows that passed validation."""
+        return len(self.valid_rows)
+
+    @property
+    def invalid_count(self) -> int:
+        """Number of rows that failed validation."""
+        return len(self.invalid_rows)
+
+
+def validate_skus(
+    parse_result: ParseResult,
+    valid_skus: set[str] | None = None,
+) -> ValidationResult:
+    """Validate SKUs in parsed rows against a set of valid SKUs.
+
+    This function filters parsed rows based on whether their SKU exists
+    in the valid SKUs set. Invalid SKUs are flagged with specific error
+    messages while valid rows are returned for further processing.
+
+    Args:
+        parse_result: The result from parsing a distributor report.
+        valid_skus: Set of valid SKU codes. If None, uses the default
+            VALID_SKUS set (UFBub250, UFRos250, UFRed250, UFCha250).
+
+    Returns:
+        ValidationResult containing:
+        - valid_rows: Rows with recognized SKUs
+        - invalid_rows: Rows with unrecognized SKUs paired with errors
+        - original_errors: Errors from the original parse result
+    """
+    if valid_skus is None:
+        valid_skus = VALID_SKUS
+
+    valid_rows: list[ParsedRow] = []
+    invalid_rows: list[tuple[ParsedRow, RowError]] = []
+
+    # Track row numbers for error reporting
+    # Since ParsedRow doesn't store row_number, we need to infer it
+    # The rows come in order, and we can calculate based on position
+    # relative to total_rows and error_count
+    row_offset = 2  # Headers are row 1, data starts at row 2
+
+    # Build a set of row numbers that had errors during parsing
+    error_row_numbers = {err.row_number for err in parse_result.errors}
+
+    # Calculate which original row number each successful row corresponds to
+    current_row = row_offset
+    row_to_number: dict[int, int] = {}
+
+    for i in range(len(parse_result.rows)):
+        # Skip row numbers that had parsing errors
+        while current_row in error_row_numbers:
+            current_row += 1
+        row_to_number[i] = current_row
+        current_row += 1
+
+    for i, row in enumerate(parse_result.rows):
+        row_number = row_to_number.get(i, row_offset + i)
+
+        if row.sku in valid_skus:
+            valid_rows.append(row)
+        else:
+            error = RowError(
+                row_number=row_number,
+                field="sku",
+                message=f"Unknown SKU: {row.sku!r}. Valid SKUs are: {', '.join(sorted(valid_skus))}",
+            )
+            invalid_rows.append((row, error))
+
+    return ValidationResult(
+        valid_rows=valid_rows,
+        invalid_rows=invalid_rows,
+        original_errors=parse_result.errors,
+    )
+
+
+def validate_and_filter_parse_result(
+    parse_result: ParseResult,
+    valid_skus: set[str] | None = None,
+) -> ParseResult:
+    """Validate SKUs and return a new ParseResult with only valid rows.
+
+    This is a convenience function that wraps validate_skus() and returns
+    a ParseResult with the invalid SKU rows converted to errors.
+
+    Args:
+        parse_result: The result from parsing a distributor report.
+        valid_skus: Set of valid SKU codes. If None, uses the default
+            VALID_SKUS set.
+
+    Returns:
+        A new ParseResult where:
+        - rows contains only rows with valid SKUs
+        - errors contains both original errors and invalid SKU errors
+        - total_rows is preserved from original
+    """
+    validation = validate_skus(parse_result, valid_skus)
+
+    return ParseResult(
+        rows=validation.valid_rows,
+        errors=validation.all_errors,
+        total_rows=parse_result.total_rows,
+    )

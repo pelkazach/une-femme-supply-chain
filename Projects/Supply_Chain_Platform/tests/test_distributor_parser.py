@@ -1368,3 +1368,228 @@ class TestParseWinebowReport:
         assert result.success_count == 0
         assert result.error_count == 1
         assert "Unsupported file extension" in result.errors[0].message
+
+
+class TestValidateSkus:
+    """Tests for SKU validation functions."""
+
+    def test_validate_all_valid_skus(self) -> None:
+        """Test validation passes for all valid SKUs."""
+        from src.services.distributor import validate_skus, VALID_SKUS
+
+        parse_result = ParseResult(
+            rows=[
+                ParsedRow(date=date(2026, 1, 15), sku="UFBub250", quantity=24),
+                ParsedRow(date=date(2026, 1, 16), sku="UFRos250", quantity=12),
+                ParsedRow(date=date(2026, 1, 17), sku="UFRed250", quantity=36),
+                ParsedRow(date=date(2026, 1, 18), sku="UFCha250", quantity=48),
+            ],
+            errors=[],
+            total_rows=4,
+        )
+
+        result = validate_skus(parse_result)
+
+        assert result.valid_count == 4
+        assert result.invalid_count == 0
+        assert len(result.all_errors) == 0
+
+    def test_validate_with_invalid_skus(self) -> None:
+        """Test that invalid SKUs are flagged with error messages."""
+        from src.services.distributor import validate_skus
+
+        parse_result = ParseResult(
+            rows=[
+                ParsedRow(date=date(2026, 1, 15), sku="UFBub250", quantity=24),
+                ParsedRow(date=date(2026, 1, 16), sku="INVALID123", quantity=12),
+                ParsedRow(date=date(2026, 1, 17), sku="UFRos250", quantity=36),
+            ],
+            errors=[],
+            total_rows=3,
+        )
+
+        result = validate_skus(parse_result)
+
+        assert result.valid_count == 2
+        assert result.invalid_count == 1
+        assert len(result.all_errors) == 1
+
+        error = result.all_errors[0]
+        assert error.field == "sku"
+        assert "Unknown SKU" in error.message
+        assert "INVALID123" in error.message
+        assert "UFBub250" in error.message  # Lists valid SKUs
+
+    def test_validate_all_invalid_skus(self) -> None:
+        """Test when all SKUs are invalid."""
+        from src.services.distributor import validate_skus
+
+        parse_result = ParseResult(
+            rows=[
+                ParsedRow(date=date(2026, 1, 15), sku="BAD1", quantity=24),
+                ParsedRow(date=date(2026, 1, 16), sku="BAD2", quantity=12),
+            ],
+            errors=[],
+            total_rows=2,
+        )
+
+        result = validate_skus(parse_result)
+
+        assert result.valid_count == 0
+        assert result.invalid_count == 2
+        assert len(result.all_errors) == 2
+
+    def test_validate_preserves_original_errors(self) -> None:
+        """Test that original parsing errors are preserved."""
+        from src.services.distributor import validate_skus
+
+        original_error = RowError(row_number=2, field="date", message="Invalid date format")
+        parse_result = ParseResult(
+            rows=[
+                ParsedRow(date=date(2026, 1, 15), sku="UFBub250", quantity=24),
+                ParsedRow(date=date(2026, 1, 17), sku="INVALID", quantity=36),
+            ],
+            errors=[original_error],
+            total_rows=3,
+        )
+
+        result = validate_skus(parse_result)
+
+        assert result.valid_count == 1
+        assert result.invalid_count == 1
+        assert len(result.original_errors) == 1
+        assert len(result.all_errors) == 2  # 1 original + 1 SKU validation error
+        assert original_error in result.original_errors
+
+    def test_validate_with_custom_sku_set(self) -> None:
+        """Test validation with custom set of valid SKUs."""
+        from src.services.distributor import validate_skus
+
+        custom_skus = {"CUSTOM1", "CUSTOM2"}
+        parse_result = ParseResult(
+            rows=[
+                ParsedRow(date=date(2026, 1, 15), sku="CUSTOM1", quantity=24),
+                ParsedRow(date=date(2026, 1, 16), sku="UFBub250", quantity=12),
+            ],
+            errors=[],
+            total_rows=2,
+        )
+
+        result = validate_skus(parse_result, valid_skus=custom_skus)
+
+        assert result.valid_count == 1
+        assert result.invalid_count == 1
+        # UFBub250 should be invalid when using custom set
+        assert any("UFBub250" in err.message for err in result.all_errors)
+
+    def test_validate_empty_parse_result(self) -> None:
+        """Test validation of empty parse result."""
+        from src.services.distributor import validate_skus
+
+        parse_result = ParseResult(rows=[], errors=[], total_rows=0)
+
+        result = validate_skus(parse_result)
+
+        assert result.valid_count == 0
+        assert result.invalid_count == 0
+        assert len(result.all_errors) == 0
+
+
+class TestValidateAndFilterParseResult:
+    """Tests for validate_and_filter_parse_result convenience function."""
+
+    def test_filter_returns_parse_result(self) -> None:
+        """Test that function returns a ParseResult."""
+        from src.services.distributor import validate_and_filter_parse_result
+
+        parse_result = ParseResult(
+            rows=[
+                ParsedRow(date=date(2026, 1, 15), sku="UFBub250", quantity=24),
+            ],
+            errors=[],
+            total_rows=1,
+        )
+
+        result = validate_and_filter_parse_result(parse_result)
+
+        assert isinstance(result, ParseResult)
+        assert result.success_count == 1
+        assert result.error_count == 0
+
+    def test_filter_removes_invalid_skus(self) -> None:
+        """Test that invalid SKUs are removed from rows and added as errors."""
+        from src.services.distributor import validate_and_filter_parse_result
+
+        parse_result = ParseResult(
+            rows=[
+                ParsedRow(date=date(2026, 1, 15), sku="UFBub250", quantity=24),
+                ParsedRow(date=date(2026, 1, 16), sku="INVALID", quantity=12),
+                ParsedRow(date=date(2026, 1, 17), sku="UFRos250", quantity=36),
+            ],
+            errors=[],
+            total_rows=3,
+        )
+
+        result = validate_and_filter_parse_result(parse_result)
+
+        assert result.success_count == 2
+        assert result.error_count == 1
+        assert result.total_rows == 3  # Preserved from original
+        assert all(row.sku in {"UFBub250", "UFRos250"} for row in result.rows)
+
+    def test_filter_combines_errors(self) -> None:
+        """Test that original errors and validation errors are combined."""
+        from src.services.distributor import validate_and_filter_parse_result
+
+        parse_result = ParseResult(
+            rows=[
+                ParsedRow(date=date(2026, 1, 15), sku="INVALID", quantity=24),
+            ],
+            errors=[
+                RowError(row_number=2, field="date", message="Date error"),
+            ],
+            total_rows=2,
+        )
+
+        result = validate_and_filter_parse_result(parse_result)
+
+        assert result.success_count == 0
+        assert result.error_count == 2  # 1 original + 1 SKU validation
+        assert any("Date error" in err.message for err in result.errors)
+        assert any("Unknown SKU" in err.message for err in result.errors)
+
+    def test_filter_with_custom_skus(self) -> None:
+        """Test filtering with custom SKU set."""
+        from src.services.distributor import validate_and_filter_parse_result
+
+        custom_skus = {"CUSTOM1"}
+        parse_result = ParseResult(
+            rows=[
+                ParsedRow(date=date(2026, 1, 15), sku="CUSTOM1", quantity=24),
+                ParsedRow(date=date(2026, 1, 16), sku="UFBub250", quantity=12),
+            ],
+            errors=[],
+            total_rows=2,
+        )
+
+        result = validate_and_filter_parse_result(parse_result, valid_skus=custom_skus)
+
+        assert result.success_count == 1
+        assert result.rows[0].sku == "CUSTOM1"
+
+
+class TestValidSkusConstant:
+    """Tests for VALID_SKUS constant."""
+
+    def test_valid_skus_contains_expected_products(self) -> None:
+        """Test that VALID_SKUS contains the 4 Une Femme products."""
+        from src.services.distributor import VALID_SKUS
+
+        expected = {"UFBub250", "UFRos250", "UFRed250", "UFCha250"}
+        assert VALID_SKUS == expected
+
+    def test_valid_skus_is_set(self) -> None:
+        """Test that VALID_SKUS is a set for O(1) lookup."""
+        from src.services.distributor import VALID_SKUS
+
+        assert isinstance(VALID_SKUS, set)

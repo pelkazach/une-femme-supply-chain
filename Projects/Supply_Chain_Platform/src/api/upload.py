@@ -11,6 +11,7 @@ from src.services.distributor import (
     parse_rndc_report,
     parse_southern_glazers_report,
     parse_winebow_report,
+    validate_and_filter_parse_result,
 )
 
 # Maximum file size: 10MB
@@ -162,6 +163,10 @@ async def upload_distributor_file(
         str | None,
         Form(description="Distributor name (RNDC, Southern Glazers, Winebow)"),
     ] = None,
+    validate_skus: Annotated[
+        bool,
+        Form(description="Whether to validate SKUs against known products (default: True)"),
+    ] = True,
 ) -> UploadResponse:
     """Upload a distributor report file for processing.
 
@@ -176,9 +181,15 @@ async def upload_distributor_file(
     If distributor is not specified, the system will attempt to auto-detect
     the format based on column headers.
 
+    SKU Validation:
+    By default, SKUs are validated against the known product list (UFBub250,
+    UFRos250, UFRed250, UFCha250). Rows with unknown SKUs are flagged with
+    errors but do not prevent other valid rows from being processed.
+
     Args:
         file: The uploaded file (CSV or Excel format).
         distributor: Optional distributor name to specify the report format.
+        validate_skus: Whether to validate SKUs (default True).
 
     Returns:
         UploadResponse: Processing summary with success/error counts.
@@ -201,6 +212,8 @@ async def upload_distributor_file(
 
     if distributor_upper == "RNDC":
         parse_result = parse_rndc_report(contents, extension)
+        if validate_skus:
+            parse_result = validate_and_filter_parse_result(parse_result)
         result = ProcessingResult(
             filename=filename,
             distributor="RNDC",
@@ -223,6 +236,8 @@ async def upload_distributor_file(
         )
     elif distributor_upper in ("SOUTHERN GLAZERS", "SOUTHERN_GLAZERS", "SOUTHERNGLAZERS"):
         parse_result = parse_southern_glazers_report(contents, extension)
+        if validate_skus:
+            parse_result = validate_and_filter_parse_result(parse_result)
         result = ProcessingResult(
             filename=filename,
             distributor="Southern Glazers",
@@ -245,6 +260,8 @@ async def upload_distributor_file(
         )
     elif distributor_upper == "WINEBOW":
         parse_result = parse_winebow_report(contents, extension)
+        if validate_skus:
+            parse_result = validate_and_filter_parse_result(parse_result)
         result = ProcessingResult(
             filename=filename,
             distributor="Winebow",

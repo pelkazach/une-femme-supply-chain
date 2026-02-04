@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 16
+- Completed: 17
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -106,9 +106,11 @@
   - Completed: 2026-02-03
   - Notes: Created parse_winebow_csv() and parse_winebow_excel() functions in src/services/distributor.py. Supports flexible column name matching (transaction_date/date/ship_date, product_code/sku/item_code, quantity/qty/units). Integrated with POST /upload endpoint (distributor="Winebow"). 26 new tests covering CSV, Excel, edge cases (empty files, missing columns, invalid data).
 
-- [ ] **Task 1.4.5**: Create SKU validation and error reporting
+- [x] **Task 1.4.5**: Create SKU validation and error reporting
   - Spec: specs/03-distributor-data-processing.md
   - Acceptance: Invalid SKUs flagged with error message, valid rows processed
+  - Completed: 2026-02-03
+  - Notes: Created validate_skus() and validate_and_filter_parse_result() functions in src/services/distributor.py. VALID_SKUS constant contains 4 Une Femme SKUs (UFBub250, UFRos250, UFRed250, UFCha250). Invalid SKUs flagged with specific error messages including the unknown SKU and list of valid SKUs. Upload endpoint updated with validate_skus parameter (default True). 18 new tests covering validation functions and API endpoint behavior.
 
 ### Priority 1.5: Inventory Metrics
 - [ ] **Task 1.5.1**: Implement DOH_T30 calculation function
