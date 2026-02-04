@@ -81,6 +81,7 @@ module = [
     "google_auth_oauthlib.*",
     "googleapiclient.*",
     "requests",
+    "azure.*",
 ]
 ignore_missing_imports = true
 

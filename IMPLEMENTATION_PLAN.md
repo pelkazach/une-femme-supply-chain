@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 34
+- Completed: 35
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -245,9 +245,11 @@
   - Notes: Created src/api/review.py with human review queue endpoints. Features include: GET /review/queue (paginated list of pending reviews with category/confidence filters), GET /review/queue/stats (queue statistics including pending count, reviewed today, avg confidence, and breakdown by category), GET /review/queue/{id} (single classification details), POST /review/queue/{id}/review (approve or correct classification with reviewer tracking), GET /review/history (paginated reviewed items with reviewer and corrected_only filters). Added router to main.py. 32 tests covering all endpoints, schemas, pagination, validation, and acceptance criteria.
 
 ### Priority 2.3: Document OCR
-- [ ] **Task 2.3.1**: Integrate Azure Document Intelligence SDK
+- [x] **Task 2.3.1**: Integrate Azure Document Intelligence SDK
   - Spec: specs/08-document-ocr.md
   - Acceptance: Client authenticated, test document processed
+  - Completed: 2026-02-03
+  - Notes: Created src/services/document_ocr.py with AzureDocumentIntelligenceClient class. Features include: API key authentication via AzureKeyCredential, analyze_document() method supporting PO/BOL/Invoice document types, extraction dataclasses (PurchaseOrderExtraction, BOLExtraction, InvoiceExtraction, LineItem), confidence threshold checking (85%) with needs_review flag, test_connection() method for auth verification. Uses prebuilt-invoice model for invoices and custom models for PO/BOL. Processing time tracking included. 45 tests covering all functionality.
 
 - [ ] **Task 2.3.2**: Create PO extraction schema and processor
   - Spec: specs/08-document-ocr.md
