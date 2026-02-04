@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 2
+- Completed: 3
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -19,9 +19,11 @@
   - Completed: 2026-02-03
   - Notes: Project "une-femme-supply-chain" created at https://railway.com/project/e7663c26-3180-405c-9574-c9945ea9f643
 
-- [ ] **Task 1.1.3**: Configure Alembic for database migrations
+- [x] **Task 1.1.3**: Configure Alembic for database migrations
   - Spec: specs/01-database-schema.md
   - Acceptance: `alembic init` complete, config connected to Railway database
+  - Completed: 2026-02-03
+  - Notes: Async template used, env.py loads DATABASE_URL from settings, greenlet added for SQLAlchemy async support
 
 ### Priority 1.2: Database Schema
 - [ ] **Task 1.2.1**: Create SQLAlchemy models for products, warehouses, distributors

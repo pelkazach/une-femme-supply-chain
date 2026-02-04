@@ -7,7 +7,7 @@ This is the Une Femme Wine Supply Chain Intelligence Platform - a system to repl
 ## Tech Stack
 
 - **Backend**: Python 3.11+ with FastAPI
-- **Database**: PostgreSQL 15 on Railway (with TimescaleDB extension)
+- **Database**: PostgreSQL 17 on Railway (standard PostgreSQL, no TimescaleDB)
 - **Queue**: Celery with Redis
 - **Forecasting**: Prophet
 - **Agents**: LangGraph
@@ -58,7 +58,7 @@ Core tables:
 - `products` - 4 SKUs (UFBub250, UFRos250, UFRed250, UFCha250)
 - `warehouses` - Storage locations
 - `distributors` - RNDC, Southern Glazers, Winebow, etc.
-- `inventory_events` - TimescaleDB hypertable for time-series data
+- `inventory_events` - Time-series data with BRIN index
 - `forecasts` - Prophet forecast results
 
 ## Environment Variables
