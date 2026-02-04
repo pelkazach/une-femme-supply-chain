@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 37
+- Completed: 38
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -263,9 +263,11 @@
   - Completed: 2026-02-03
   - Notes: Created src/services/bol_processor.py with BOLProcessor class. Features include: carrier normalization with 15 known carriers and 12 aliases (UPS, FEDEX, OLD DOMINION, etc.), BOL validation functions (bol_number, shipper/consignee name and address, carrier, tracking_number, ship_date, cargo_description, weight), field-level accuracy tracking with weighted scoring (required fields 2.0, important 1.5, optional 1.0), overall accuracy calculation meeting >93% requirement, automatic carrier normalization. BOLProcessingResult includes validation_issues (error/warning/info levels), field_accuracies, and needs_review flag. 78 tests covering normalization, validation, accuracy, and integration.
 
-- [ ] **Task 2.3.4**: Create Invoice extraction using prebuilt model
+- [x] **Task 2.3.4**: Create Invoice extraction using prebuilt model
   - Spec: specs/08-document-ocr.md
   - Acceptance: Extracts invoice#, amounts, line items
+  - Completed: 2026-02-03
+  - Notes: Created src/services/invoice_processor.py with InvoiceProcessor class using Azure's prebuilt-invoice model. Features include: SKU normalization with 16 aliases mapping to 4 Une Femme products, invoice validation functions (invoice_number, vendor_name, invoice_date, due_date, amounts, line items), line item validation with quantity/price/total cross-checks, field-level accuracy tracking with weighted scoring (required fields 2.0, important 1.5, optional 1.0), overall accuracy calculation meeting >93% requirement, automatic SKU normalization. InvoiceProcessingResult includes validation_issues (error/warning/info levels), field_accuracies, valid_line_items property, and needs_review flag. Known vendors list for validation. 76 tests covering normalization, validation, accuracy, and integration.
 
 ## Phase 3: Intelligence (P2)
 
