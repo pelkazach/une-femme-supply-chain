@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 7
+- Completed: 8
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -51,9 +51,11 @@
   - Notes: Created two materialized views in Alembic migration (e00126dfbb34): mv_daily_metrics (daily aggregates of shipments/depletions by SKU/warehouse) and mv_doh_metrics (DOH_T30, DOH_T90, shipment:depletion ratios, velocity trends). Uses standard PostgreSQL materialized views since TimescaleDB is not available. Added refresh_doh_metrics() function for scheduled refreshes. Views created WITH NO DATA for initial performance.
 
 ### Priority 1.3: WineDirect Integration
-- [ ] **Task 1.3.1**: Create WineDirect API client with Bearer Token auth
+- [x] **Task 1.3.1**: Create WineDirect API client with Bearer Token auth
   - Spec: specs/02-winedirect-integration.md
   - Acceptance: Client authenticates successfully, token stored securely
+  - Completed: 2026-02-03
+  - Notes: Created async WineDirectClient in src/services/winedirect.py with Bearer Token authentication via OAuth client credentials grant. Features include automatic token refresh (with 60s buffer before expiry), 401 retry handling, and async context manager pattern. Includes get_sellable_inventory(), get_inventory_out(), and get_velocity_report() methods. 19 tests covering auth, API calls, token refresh, and error handling.
 
 - [ ] **Task 1.3.2**: Implement GET /inventory/sellable endpoint
   - Spec: specs/02-winedirect-integration.md
