@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 6
+- Completed: 7
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -44,9 +44,11 @@
   - Completed: 2026-02-03
   - Notes: Created Alembic migration (52fa8d4129df) that seeds 4 product SKUs with INSERT ... ON CONFLICT DO NOTHING for idempotency. Products: UFBub250 (sparkling), UFRos250 (rose), UFRed250 (red), UFCha250 (white).
 
-- [ ] **Task 1.2.4**: Create materialized views for DOH_T30 and DOH_T90
+- [x] **Task 1.2.4**: Create materialized views for DOH_T30 and DOH_T90
   - Spec: specs/04-inventory-metrics.md
   - Acceptance: Materialized views created, can be refreshed on schedule, query returns expected values
+  - Completed: 2026-02-03
+  - Notes: Created two materialized views in Alembic migration (e00126dfbb34): mv_daily_metrics (daily aggregates of shipments/depletions by SKU/warehouse) and mv_doh_metrics (DOH_T30, DOH_T90, shipment:depletion ratios, velocity trends). Uses standard PostgreSQL materialized views since TimescaleDB is not available. Added refresh_doh_metrics() function for scheduled refreshes. Views created WITH NO DATA for initial performance.
 
 ### Priority 1.3: WineDirect Integration
 - [ ] **Task 1.3.1**: Create WineDirect API client with Bearer Token auth
