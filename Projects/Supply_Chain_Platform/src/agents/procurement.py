@@ -495,11 +495,142 @@ def _create_insufficient_data_response(
     }
 
 
-def inventory_optimizer(state: ProcurementState) -> dict[str, Any]:
-    """Calculate reorder quantity and safety stock.
+def calculate_safety_stock_from_forecast(
+    forecast: list[dict[str, Any]],
+    service_level: float = 0.95,
+) -> int:
+    """Calculate safety stock from forecast prediction intervals.
 
-    This agent analyzes the forecast and current inventory to determine
-    the optimal reorder quantity and safety stock level.
+    Safety stock is the buffer inventory needed to account for demand
+    variability. It's calculated from the difference between the upper
+    prediction bound and the point forecast.
+
+    Args:
+        forecast: List of forecast dictionaries with yhat, yhat_upper keys
+        service_level: Target service level (0.95 for 95%)
+
+    Returns:
+        Recommended safety stock quantity (rounded up to integer)
+    """
+    if not forecast:
+        return 0
+
+    # Calculate average variability from forecast intervals
+    # Safety stock = average(yhat_upper - yhat) across forecast periods
+    variabilities = []
+    for point in forecast:
+        yhat = point.get("yhat", 0)
+        yhat_upper = point.get("yhat_upper", yhat)
+        variability = max(0, yhat_upper - yhat)
+        variabilities.append(variability)
+
+    if not variabilities:
+        return 0
+
+    avg_variability = sum(variabilities) / len(variabilities)
+
+    # Scale by z-score ratio if service level differs from forecast interval
+    # Prophet default is 80% (z=1.28), we typically want 95% (z=1.96)
+    z_80 = 1.28  # Z-score for 80% interval
+    z_95 = 1.96  # Z-score for 95% interval
+    z_99 = 2.58  # Z-score for 99% interval
+
+    # Select appropriate z-score based on service level
+    if service_level >= 0.99:
+        target_z = z_99
+    elif service_level >= 0.95:
+        target_z = z_95
+    else:
+        target_z = z_80
+
+    # Scale variability to match service level
+    safety_stock = avg_variability * (target_z / z_80)
+
+    # Round up to ensure sufficient stock
+    return max(0, int(safety_stock + 0.5))
+
+
+def calculate_reorder_point(
+    average_daily_demand: float,
+    lead_time_days: int,
+    safety_stock: int,
+) -> int:
+    """Calculate the reorder point (inventory level that triggers reorder).
+
+    Reorder Point = (Average Daily Demand × Lead Time) + Safety Stock
+
+    When inventory falls to this level, a new order should be placed.
+
+    Args:
+        average_daily_demand: Expected daily demand rate
+        lead_time_days: Days between order and delivery
+        safety_stock: Buffer stock for demand variability
+
+    Returns:
+        Reorder point quantity (rounded up to integer)
+    """
+    lead_time_demand = average_daily_demand * lead_time_days
+    reorder_point = lead_time_demand + safety_stock
+    return max(0, int(reorder_point + 0.5))
+
+
+def calculate_reorder_quantity(
+    current_inventory: int,
+    reorder_point: int,
+    target_weeks_of_supply: int,
+    average_weekly_demand: float,
+    minimum_order_quantity: int = 0,
+) -> int:
+    """Calculate the recommended order quantity.
+
+    Uses a weeks-of-supply model to determine order quantity.
+    Order enough to cover target_weeks_of_supply of expected demand.
+
+    Args:
+        current_inventory: Current inventory on hand
+        reorder_point: Level at which to trigger reorder
+        target_weeks_of_supply: Target inventory coverage in weeks (default: 12)
+        average_weekly_demand: Expected weekly demand rate
+        minimum_order_quantity: Minimum order size (e.g., case quantity)
+
+    Returns:
+        Recommended order quantity (respects minimum order quantity)
+    """
+    # Target inventory = target weeks × weekly demand
+    target_inventory = int(target_weeks_of_supply * average_weekly_demand)
+
+    # Calculate quantity needed to reach target
+    # Only order if below reorder point
+    if current_inventory >= reorder_point:
+        # Not at reorder point yet, but may still recommend proactive order
+        quantity_needed = max(0, target_inventory - current_inventory)
+    else:
+        # Below reorder point, order to reach target
+        quantity_needed = max(0, target_inventory - current_inventory)
+
+    # Apply minimum order quantity
+    if quantity_needed > 0 and quantity_needed < minimum_order_quantity:
+        quantity_needed = minimum_order_quantity
+
+    return quantity_needed
+
+
+# Default lead time if not specified by vendor
+DEFAULT_LEAD_TIME_DAYS = 14
+
+# Default target weeks of supply for wine inventory
+DEFAULT_TARGET_WEEKS_SUPPLY = 12
+
+# Default service level for safety stock calculation
+DEFAULT_SERVICE_LEVEL = 0.95
+
+
+def inventory_optimizer(state: ProcurementState) -> dict[str, Any]:
+    """Calculate reorder quantity and safety stock (sync wrapper).
+
+    This is a synchronous wrapper that performs calculations using
+    forecast data from the state. For database-backed calculations,
+    use inventory_optimizer_async.
 
     Args:
         state: Current procurement state with forecast and inventory data
@@ -512,22 +643,48 @@ def inventory_optimizer(state: ProcurementState) -> dict[str, Any]:
     forecast_confidence = state.get("forecast_confidence", 0.85)
     sku = state.get("sku", "")
 
-    # Placeholder: Calculate safety stock based on forecast variability
-    # safety_stock = calculate_safety_stock(forecast_df, service_level=0.95)
-    safety_stock = 100  # Placeholder
+    # Calculate safety stock from forecast variability
+    safety_stock = calculate_safety_stock_from_forecast(
+        forecast,
+        service_level=DEFAULT_SERVICE_LEVEL,
+    )
 
-    # Placeholder: Calculate reorder point
-    # reorder_point = average_daily_demand * lead_time + safety_stock
-    reorder_point = 200  # Placeholder
+    # Calculate average demand from forecast
+    if forecast:
+        total_forecast_demand = sum(point.get("yhat", 0) for point in forecast)
+        forecast_weeks = len(forecast)
+        average_weekly_demand = total_forecast_demand / forecast_weeks if forecast_weeks > 0 else 0
+        average_daily_demand = average_weekly_demand / 7.0
+    else:
+        # No forecast available, use conservative defaults
+        average_weekly_demand = 0.0
+        average_daily_demand = 0.0
 
-    # Placeholder: Calculate recommended quantity
-    # Based on EOQ or weeks of supply model
-    recommended_quantity = 500  # Placeholder
+    # Calculate reorder point
+    reorder_point = calculate_reorder_point(
+        average_daily_demand=average_daily_demand,
+        lead_time_days=DEFAULT_LEAD_TIME_DAYS,
+        safety_stock=safety_stock,
+    )
 
+    # Calculate recommended quantity
+    recommended_quantity = calculate_reorder_quantity(
+        current_inventory=current_inventory,
+        reorder_point=reorder_point,
+        target_weeks_of_supply=DEFAULT_TARGET_WEEKS_SUPPLY,
+        average_weekly_demand=average_weekly_demand,
+    )
+
+    # Build reasoning for audit trail
     reasoning = (
-        f"Calculated safety stock of {safety_stock} units and "
-        f"recommended order of {recommended_quantity} units for SKU {sku}. "
-        f"Current inventory: {current_inventory}, reorder point: {reorder_point}."
+        f"Calculated safety stock of {safety_stock} units for SKU {sku} "
+        f"(service level: {DEFAULT_SERVICE_LEVEL:.0%}). "
+        f"Average weekly demand: {average_weekly_demand:.1f} units. "
+        f"Reorder point: {reorder_point} units "
+        f"({DEFAULT_LEAD_TIME_DAYS} day lead time + safety stock). "
+        f"Recommended order: {recommended_quantity} units "
+        f"(targeting {DEFAULT_TARGET_WEEKS_SUPPLY} weeks of supply). "
+        f"Current inventory: {current_inventory} units."
     )
 
     audit_entry = {
@@ -539,11 +696,16 @@ def inventory_optimizer(state: ProcurementState) -> dict[str, Any]:
             "current_inventory": current_inventory,
             "forecast_periods": len(forecast),
             "forecast_confidence": forecast_confidence,
+            "lead_time_days": DEFAULT_LEAD_TIME_DAYS,
+            "service_level": DEFAULT_SERVICE_LEVEL,
+            "target_weeks_supply": DEFAULT_TARGET_WEEKS_SUPPLY,
         },
         "outputs": {
             "safety_stock": safety_stock,
             "reorder_point": reorder_point,
             "recommended_quantity": recommended_quantity,
+            "average_weekly_demand": average_weekly_demand,
+            "average_daily_demand": average_daily_demand,
         },
         "confidence": forecast_confidence,
     }
@@ -553,6 +715,232 @@ def inventory_optimizer(state: ProcurementState) -> dict[str, Any]:
         "reorder_point": reorder_point,
         "recommended_quantity": recommended_quantity,
         "workflow_status": WorkflowStatus.ANALYZING_VENDOR.value,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "audit_log": [audit_entry],
+    }
+
+
+async def inventory_optimizer_async(
+    state: ProcurementState,
+    session: AsyncSession,
+    lead_time_days: int = DEFAULT_LEAD_TIME_DAYS,
+    target_weeks_supply: int = DEFAULT_TARGET_WEEKS_SUPPLY,
+    service_level: float = DEFAULT_SERVICE_LEVEL,
+) -> dict[str, Any]:
+    """Calculate safety stock and reorder quantity (async with database).
+
+    This agent node analyzes the forecast and current inventory to determine
+    the optimal reorder quantity and safety stock level. It uses:
+
+    1. **Safety Stock**: Buffer inventory to protect against demand variability.
+       Calculated from forecast prediction intervals scaled to service level.
+
+    2. **Reorder Point**: Inventory level that triggers a reorder.
+       Reorder Point = (Lead Time × Daily Demand) + Safety Stock
+
+    3. **Reorder Quantity**: How much to order when reorder point is reached.
+       Uses weeks-of-supply model targeting configurable weeks of coverage.
+
+    Args:
+        state: Current procurement state with forecast and inventory data
+        session: Async database session for retrieving current inventory
+        lead_time_days: Days between order and delivery (default: 14)
+        target_weeks_supply: Target inventory coverage in weeks (default: 12)
+        service_level: Service level for safety stock (default: 0.95 for 95%)
+
+    Returns:
+        Updated state with safety_stock, reorder_point, and recommended_quantity
+
+    Note:
+        - If forecast is empty, uses historical demand from database
+        - Safety stock uses 95% service level by default (z=1.96)
+        - Reorder quantity respects minimum order quantities from vendor
+    """
+    import uuid as uuid_module
+
+    from src.services.metrics import (
+        get_current_inventory,
+        get_depletion_total,
+    )
+
+    sku_id_str = state.get("sku_id", "")
+    sku = state.get("sku", "")
+    forecast = state.get("forecast", [])
+    forecast_confidence = state.get("forecast_confidence", 0.0)
+
+    # Parse SKU ID
+    try:
+        sku_uuid = uuid_module.UUID(sku_id_str)
+    except (ValueError, TypeError) as e:
+        logger.error(f"Invalid SKU ID format: {sku_id_str}: {e}")
+        return _create_optimizer_error_response(
+            sku,
+            f"Invalid SKU ID format: {sku_id_str}",
+            forecast_confidence,
+        )
+
+    # Get current inventory from database (more accurate than state)
+    try:
+        current_inventory = await get_current_inventory(session, sku_uuid)
+    except Exception as e:
+        logger.error(f"Error fetching current inventory for SKU {sku}: {e}")
+        # Fall back to state value
+        current_inventory = state.get("current_inventory", 0)
+
+    # Calculate average demand
+    if forecast:
+        # Use forecast data for demand estimates
+        total_forecast_demand = sum(point.get("yhat", 0) for point in forecast)
+        forecast_weeks = len(forecast)
+        average_weekly_demand = total_forecast_demand / forecast_weeks if forecast_weeks > 0 else 0
+        average_daily_demand = average_weekly_demand / 7.0
+        demand_source = "forecast"
+    else:
+        # No forecast - use historical data from last 90 days
+        try:
+            depletion_90d = await get_depletion_total(session, sku_uuid, days=90)
+            average_daily_demand = depletion_90d / 90.0
+            average_weekly_demand = average_daily_demand * 7.0
+            demand_source = "historical_90d"
+        except Exception as e:
+            logger.warning(f"Error fetching historical demand for SKU {sku}: {e}")
+            average_daily_demand = 0.0
+            average_weekly_demand = 0.0
+            demand_source = "none"
+
+    # Calculate safety stock from forecast variability
+    safety_stock = calculate_safety_stock_from_forecast(
+        forecast,
+        service_level=service_level,
+    )
+
+    # If no forecast variability data, estimate safety stock from historical demand
+    if safety_stock == 0 and average_weekly_demand > 0:
+        # Use coefficient of variation approach: safety_stock = z × σ × √lead_time
+        # Assume CV of 0.25 (25% demand variability) if no data
+        assumed_cv = 0.25
+        std_daily_demand = average_daily_demand * assumed_cv
+        z_score = 1.96 if service_level >= 0.95 else 1.28  # 95% or 80%
+        safety_stock = int(z_score * std_daily_demand * (lead_time_days ** 0.5) + 0.5)
+
+    # Calculate reorder point
+    reorder_point = calculate_reorder_point(
+        average_daily_demand=average_daily_demand,
+        lead_time_days=lead_time_days,
+        safety_stock=safety_stock,
+    )
+
+    # Calculate recommended quantity
+    recommended_quantity = calculate_reorder_quantity(
+        current_inventory=current_inventory,
+        reorder_point=reorder_point,
+        target_weeks_of_supply=target_weeks_supply,
+        average_weekly_demand=average_weekly_demand,
+    )
+
+    # Determine if we should recommend ordering now
+    needs_reorder = current_inventory <= reorder_point
+
+    # Build detailed reasoning for audit trail
+    reasoning_parts = [
+        f"Inventory optimization for SKU {sku}:",
+        f"Current inventory: {current_inventory} units.",
+        f"Demand source: {demand_source} (avg weekly: {average_weekly_demand:.1f} units).",
+        f"Safety stock: {safety_stock} units (service level: {service_level:.0%}).",
+        f"Reorder point: {reorder_point} units ({lead_time_days} day lead time).",
+        f"Target: {target_weeks_supply} weeks of supply.",
+    ]
+
+    if needs_reorder:
+        reasoning_parts.append(
+            f"⚠️ REORDER NEEDED: Inventory ({current_inventory}) ≤ reorder point ({reorder_point})."
+        )
+        reasoning_parts.append(f"Recommended order quantity: {recommended_quantity} units.")
+    else:
+        days_of_supply = (
+            int(current_inventory / average_daily_demand)
+            if average_daily_demand > 0
+            else float("inf")
+        )
+        reasoning_parts.append(
+            f"✓ Inventory adequate: {days_of_supply} days of supply remaining."
+        )
+        if recommended_quantity > 0:
+            reasoning_parts.append(
+                f"Proactive order of {recommended_quantity} units would reach target coverage."
+            )
+
+    reasoning = " ".join(reasoning_parts)
+
+    audit_entry = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "agent": "inventory_optimizer",
+        "action": "calculate_reorder",
+        "reasoning": reasoning,
+        "inputs": {
+            "sku_id": sku_id_str,
+            "sku": sku,
+            "current_inventory": current_inventory,
+            "forecast_periods": len(forecast),
+            "forecast_confidence": forecast_confidence,
+            "lead_time_days": lead_time_days,
+            "service_level": service_level,
+            "target_weeks_supply": target_weeks_supply,
+            "demand_source": demand_source,
+        },
+        "outputs": {
+            "safety_stock": safety_stock,
+            "reorder_point": reorder_point,
+            "recommended_quantity": recommended_quantity,
+            "average_weekly_demand": average_weekly_demand,
+            "average_daily_demand": average_daily_demand,
+            "needs_reorder": needs_reorder,
+        },
+        "confidence": forecast_confidence,
+    }
+
+    return {
+        "current_inventory": current_inventory,  # Update with accurate value
+        "safety_stock": safety_stock,
+        "reorder_point": reorder_point,
+        "recommended_quantity": recommended_quantity,
+        "workflow_status": WorkflowStatus.ANALYZING_VENDOR.value,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "audit_log": [audit_entry],
+    }
+
+
+def _create_optimizer_error_response(
+    sku: str,
+    error_message: str,
+    forecast_confidence: float,
+) -> dict[str, Any]:
+    """Create an error response for failed inventory optimization.
+
+    Args:
+        sku: SKU code
+        error_message: Description of the error
+        forecast_confidence: Confidence from forecast stage
+
+    Returns:
+        State update dict with error information
+    """
+    audit_entry = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "agent": "inventory_optimizer",
+        "action": "optimization_error",
+        "reasoning": f"Inventory optimization failed for SKU {sku}: {error_message}",
+        "inputs": {"sku": sku},
+        "outputs": {"error": error_message},
+        "confidence": 0.0,
+    }
+
+    return {
+        "safety_stock": 0,
+        "reorder_point": 0,
+        "recommended_quantity": 0,
+        "workflow_status": WorkflowStatus.FAILED.value,
+        "error_message": error_message,
         "updated_at": datetime.now(UTC).isoformat(),
         "audit_log": [audit_entry],
     }

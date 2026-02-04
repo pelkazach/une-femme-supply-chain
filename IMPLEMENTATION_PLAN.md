@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 40
+- Completed: 41
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -284,9 +284,11 @@
   - Completed: 2026-02-03
   - Notes: Created demand_forecaster_async() function that integrates with Prophet forecasting service. Features include: database retrieval of training data via get_training_data(), model training via train_forecast_model_for_sku(), 26-week forecast generation with confidence intervals, confidence score calculation from MAPE (1 - MAPE), handling of insufficient training data (<728 days) with low-confidence response triggering human review, comprehensive error handling with audit logging, forecast output in state-compatible format (week, date, yhat, yhat_lower, yhat_upper). Helper functions _create_forecast_error_response() and _create_insufficient_data_response() for different error scenarios. 21 new tests covering success path, error handling, confidence calculations, and edge cases.
 
-- [ ] **Task 3.1.3**: Implement inventory optimizer agent node
+- [x] **Task 3.1.3**: Implement inventory optimizer agent node
   - Spec: specs/09-agentic-automation.md
   - Acceptance: Calculates safety stock and reorder quantity
+  - Completed: 2026-02-04
+  - Notes: Created inventory_optimizer_async() function that calculates optimal inventory parameters. Features include: calculate_safety_stock_from_forecast() using forecast prediction intervals scaled to service level (default 95%), calculate_reorder_point() using (lead_time × daily_demand + safety_stock), calculate_reorder_quantity() using weeks-of-supply model (default 12 weeks), fallback to historical 90-day demand when no forecast available, coefficient of variation approach for safety stock when no forecast variability data, configurable lead_time_days, target_weeks_supply, and service_level parameters, needs_reorder flag in output, database integration for accurate current inventory, graceful error handling with _create_optimizer_error_response(). 32 new tests covering pure functions, sync wrapper, async function, and workflow integration.
 
 - [ ] **Task 3.1.4**: Implement human approval interrupt node
   - Spec: specs/09-agentic-automation.md

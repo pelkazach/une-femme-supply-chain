@@ -17,7 +17,11 @@ from src.agents.procurement import (
     WorkflowStatus,
     _create_forecast_error_response,
     _create_insufficient_data_response,
+    _create_optimizer_error_response,
     build_procurement_workflow,
+    calculate_reorder_point,
+    calculate_reorder_quantity,
+    calculate_safety_stock_from_forecast,
     compile_workflow,
     create_initial_state,
     demand_forecaster,
@@ -25,6 +29,7 @@ from src.agents.procurement import (
     generate_purchase_order,
     human_approval,
     inventory_optimizer,
+    inventory_optimizer_async,
     should_require_approval,
     vendor_analyzer,
 )
@@ -1337,3 +1342,549 @@ class TestDemandForecasterAsync:
         assert audit_entry["outputs"]["mape"] == 0.10
         assert audit_entry["outputs"]["rmse"] == 15.0
         assert audit_entry["inputs"]["training_data_days"] == 730
+
+
+class TestCalculateSafetyStockFromForecast:
+    """Tests for calculate_safety_stock_from_forecast function."""
+
+    def test_empty_forecast_returns_zero(self) -> None:
+        """Test that empty forecast returns zero safety stock."""
+        from src.agents.procurement import calculate_safety_stock_from_forecast
+
+        result = calculate_safety_stock_from_forecast([])
+        assert result == 0
+
+    def test_single_point_forecast(self) -> None:
+        """Test safety stock calculation with single forecast point."""
+        from src.agents.procurement import calculate_safety_stock_from_forecast
+
+        forecast = [{"yhat": 100.0, "yhat_upper": 120.0}]
+        result = calculate_safety_stock_from_forecast(forecast, service_level=0.80)
+        # Variability = 20, no scaling needed for 80% level
+        assert result == 20
+
+    def test_multiple_points_averaging(self) -> None:
+        """Test that multiple points are averaged correctly."""
+        from src.agents.procurement import calculate_safety_stock_from_forecast
+
+        forecast = [
+            {"yhat": 100.0, "yhat_upper": 120.0},  # variability = 20
+            {"yhat": 100.0, "yhat_upper": 140.0},  # variability = 40
+        ]
+        result = calculate_safety_stock_from_forecast(forecast, service_level=0.80)
+        # Average variability = 30, no scaling for 80%
+        assert result == 30
+
+    def test_95_service_level_scaling(self) -> None:
+        """Test that 95% service level scales the safety stock up."""
+        from src.agents.procurement import calculate_safety_stock_from_forecast
+
+        forecast = [{"yhat": 100.0, "yhat_upper": 120.0}]
+        result = calculate_safety_stock_from_forecast(forecast, service_level=0.95)
+        # Variability = 20, scaled by 1.96/1.28 ≈ 1.53
+        expected = int(20 * (1.96 / 1.28) + 0.5)
+        assert result == expected
+
+    def test_missing_yhat_upper_uses_yhat(self) -> None:
+        """Test handling of missing yhat_upper field."""
+        from src.agents.procurement import calculate_safety_stock_from_forecast
+
+        forecast = [{"yhat": 100.0}]  # No yhat_upper
+        result = calculate_safety_stock_from_forecast(forecast)
+        # Variability = 0 (yhat_upper defaults to yhat)
+        assert result == 0
+
+    def test_negative_variability_clamped(self) -> None:
+        """Test that negative variability is clamped to zero."""
+        from src.agents.procurement import calculate_safety_stock_from_forecast
+
+        forecast = [{"yhat": 100.0, "yhat_upper": 80.0}]  # Upper < yhat
+        result = calculate_safety_stock_from_forecast(forecast)
+        # Variability clamped to 0
+        assert result == 0
+
+
+class TestCalculateReorderPoint:
+    """Tests for calculate_reorder_point function."""
+
+    def test_basic_calculation(self) -> None:
+        """Test basic reorder point calculation."""
+        from src.agents.procurement import calculate_reorder_point
+
+        # 10 units/day × 14 days + 50 safety stock = 190
+        result = calculate_reorder_point(
+            average_daily_demand=10.0,
+            lead_time_days=14,
+            safety_stock=50,
+        )
+        assert result == 190
+
+    def test_zero_demand(self) -> None:
+        """Test reorder point with zero demand."""
+        from src.agents.procurement import calculate_reorder_point
+
+        # 0 × 14 + 50 = 50
+        result = calculate_reorder_point(
+            average_daily_demand=0.0,
+            lead_time_days=14,
+            safety_stock=50,
+        )
+        assert result == 50
+
+    def test_zero_safety_stock(self) -> None:
+        """Test reorder point with zero safety stock."""
+        from src.agents.procurement import calculate_reorder_point
+
+        # 10 × 14 + 0 = 140
+        result = calculate_reorder_point(
+            average_daily_demand=10.0,
+            lead_time_days=14,
+            safety_stock=0,
+        )
+        assert result == 140
+
+    def test_rounding_up(self) -> None:
+        """Test that result is rounded correctly."""
+        from src.agents.procurement import calculate_reorder_point
+
+        # 10.5 × 7 + 25 = 98.5 → 99
+        result = calculate_reorder_point(
+            average_daily_demand=10.5,
+            lead_time_days=7,
+            safety_stock=25,
+        )
+        assert result == 99
+
+
+class TestCalculateReorderQuantity:
+    """Tests for calculate_reorder_quantity function."""
+
+    def test_below_reorder_point(self) -> None:
+        """Test order quantity when below reorder point."""
+        from src.agents.procurement import calculate_reorder_quantity
+
+        # Current: 100, reorder point: 200, target: 12 weeks @ 50/week = 600
+        # Quantity needed: 600 - 100 = 500
+        result = calculate_reorder_quantity(
+            current_inventory=100,
+            reorder_point=200,
+            target_weeks_of_supply=12,
+            average_weekly_demand=50.0,
+        )
+        assert result == 500
+
+    def test_at_reorder_point(self) -> None:
+        """Test order quantity exactly at reorder point."""
+        from src.agents.procurement import calculate_reorder_quantity
+
+        result = calculate_reorder_quantity(
+            current_inventory=200,
+            reorder_point=200,
+            target_weeks_of_supply=12,
+            average_weekly_demand=50.0,
+        )
+        # Target = 600, current = 200, need 400
+        assert result == 400
+
+    def test_above_reorder_point(self) -> None:
+        """Test order quantity when above reorder point."""
+        from src.agents.procurement import calculate_reorder_quantity
+
+        result = calculate_reorder_quantity(
+            current_inventory=400,
+            reorder_point=200,
+            target_weeks_of_supply=12,
+            average_weekly_demand=50.0,
+        )
+        # Target = 600, current = 400, proactive order = 200
+        assert result == 200
+
+    def test_above_target(self) -> None:
+        """Test when current inventory exceeds target."""
+        from src.agents.procurement import calculate_reorder_quantity
+
+        result = calculate_reorder_quantity(
+            current_inventory=700,
+            reorder_point=200,
+            target_weeks_of_supply=12,
+            average_weekly_demand=50.0,
+        )
+        # Target = 600, current = 700, no order needed
+        assert result == 0
+
+    def test_minimum_order_quantity(self) -> None:
+        """Test that minimum order quantity is respected."""
+        from src.agents.procurement import calculate_reorder_quantity
+
+        result = calculate_reorder_quantity(
+            current_inventory=580,
+            reorder_point=200,
+            target_weeks_of_supply=12,
+            average_weekly_demand=50.0,
+            minimum_order_quantity=100,
+        )
+        # Would need 20, but minimum is 100
+        assert result == 100
+
+    def test_zero_demand(self) -> None:
+        """Test with zero weekly demand."""
+        from src.agents.procurement import calculate_reorder_quantity
+
+        result = calculate_reorder_quantity(
+            current_inventory=100,
+            reorder_point=200,
+            target_weeks_of_supply=12,
+            average_weekly_demand=0.0,
+        )
+        # Target = 0, no order needed
+        assert result == 0
+
+
+class TestInventoryOptimizerSync:
+    """Tests for synchronous inventory_optimizer function."""
+
+    def test_with_forecast_data(self) -> None:
+        """Test optimizer with forecast data available."""
+        state = create_initial_state(
+            sku_id="test-sku",
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        # Add forecast data
+        state["forecast"] = [
+            {"week": 1, "yhat": 70.0, "yhat_lower": 50.0, "yhat_upper": 90.0},
+            {"week": 2, "yhat": 75.0, "yhat_lower": 55.0, "yhat_upper": 95.0},
+        ]
+        state["forecast_confidence"] = 0.90
+
+        result = inventory_optimizer(state)
+
+        assert "safety_stock" in result
+        assert "reorder_point" in result
+        assert "recommended_quantity" in result
+        assert result["safety_stock"] > 0  # Should have calculated safety stock
+        assert result["workflow_status"] == WorkflowStatus.ANALYZING_VENDOR.value
+
+    def test_without_forecast_data(self) -> None:
+        """Test optimizer without forecast data."""
+        state = create_initial_state(
+            sku_id="test-sku",
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        state["forecast"] = []
+        state["forecast_confidence"] = 0.0
+
+        result = inventory_optimizer(state)
+
+        # Should still return valid output, just with zero values
+        assert result["safety_stock"] == 0
+        assert result["reorder_point"] == 0
+        assert result["recommended_quantity"] == 0
+
+    def test_audit_log_contains_details(self) -> None:
+        """Test that audit log contains calculation details."""
+        state = create_initial_state(
+            sku_id="test-sku",
+            sku="UFBub250",
+            current_inventory=500,
+        )
+        state["forecast"] = [
+            {"week": 1, "yhat": 100.0, "yhat_lower": 80.0, "yhat_upper": 120.0}
+        ]
+
+        result = inventory_optimizer(state)
+
+        audit = result["audit_log"][0]
+        assert audit["agent"] == "inventory_optimizer"
+        assert audit["action"] == "calculate_reorder"
+        assert "average_weekly_demand" in audit["outputs"]
+        assert "average_daily_demand" in audit["outputs"]
+        assert "lead_time_days" in audit["inputs"]
+        assert "service_level" in audit["inputs"]
+
+
+class TestInventoryOptimizerAsync:
+    """Tests for inventory_optimizer_async function."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_sku_id_format(self) -> None:
+        """Test handling of invalid SKU ID format."""
+        from src.agents.procurement import inventory_optimizer_async
+
+        state = create_initial_state(
+            sku_id="not-a-valid-uuid",
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        result = await inventory_optimizer_async(state, mock_session)
+
+        assert result["workflow_status"] == WorkflowStatus.FAILED.value
+        assert "Invalid SKU ID format" in result["error_message"]
+        assert result["safety_stock"] == 0
+        assert result["reorder_point"] == 0
+        assert result["recommended_quantity"] == 0
+
+    @pytest.mark.asyncio
+    async def test_with_forecast_from_state(self) -> None:
+        """Test optimizer uses forecast data from state."""
+        from src.agents.procurement import inventory_optimizer_async
+
+        sku_id = str(uuid4())
+        state = create_initial_state(
+            sku_id=sku_id,
+            sku="UFBub250",
+            current_inventory=200,
+        )
+        # Add 26 weeks of forecast data
+        state["forecast"] = [
+            {"week": i + 1, "yhat": 100.0, "yhat_lower": 80.0, "yhat_upper": 120.0}
+            for i in range(26)
+        ]
+        state["forecast_confidence"] = 0.90
+
+        mock_session = AsyncMock()
+
+        with patch("src.services.metrics.get_current_inventory") as mock_inv:
+            mock_inv.return_value = 200
+
+            result = await inventory_optimizer_async(state, mock_session)
+
+        assert result["workflow_status"] == WorkflowStatus.ANALYZING_VENDOR.value
+        assert result["safety_stock"] > 0
+        assert result["reorder_point"] > 0
+        # Weekly demand = 100, 12 weeks = 1200, current = 200, need 1000
+        assert result["recommended_quantity"] > 0
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_historical_demand(self) -> None:
+        """Test optimizer falls back to historical demand when no forecast."""
+        from src.agents.procurement import inventory_optimizer_async
+
+        sku_id = str(uuid4())
+        state = create_initial_state(
+            sku_id=sku_id,
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        state["forecast"] = []  # No forecast
+        state["forecast_confidence"] = 0.0
+
+        mock_session = AsyncMock()
+
+        with patch("src.services.metrics.get_current_inventory") as mock_inv, \
+             patch("src.services.metrics.get_depletion_total") as mock_dep:
+            mock_inv.return_value = 100
+            mock_dep.return_value = 900  # 900 units in 90 days = 10/day
+
+            result = await inventory_optimizer_async(state, mock_session)
+
+        assert result["workflow_status"] == WorkflowStatus.ANALYZING_VENDOR.value
+        # Should have calculated from historical data
+        audit = result["audit_log"][0]
+        assert audit["inputs"]["demand_source"] == "historical_90d"
+        assert audit["outputs"]["average_daily_demand"] == pytest.approx(10.0)
+
+    @pytest.mark.asyncio
+    async def test_needs_reorder_flag(self) -> None:
+        """Test that needs_reorder flag is set correctly."""
+        from src.agents.procurement import inventory_optimizer_async
+
+        sku_id = str(uuid4())
+        state = create_initial_state(
+            sku_id=sku_id,
+            sku="UFBub250",
+            current_inventory=50,  # Low inventory
+        )
+        state["forecast"] = [
+            {"week": 1, "yhat": 100.0, "yhat_lower": 80.0, "yhat_upper": 120.0}
+        ]
+        state["forecast_confidence"] = 0.90
+
+        mock_session = AsyncMock()
+
+        with patch("src.services.metrics.get_current_inventory") as mock_inv:
+            mock_inv.return_value = 50  # Low inventory
+
+            result = await inventory_optimizer_async(state, mock_session)
+
+        audit = result["audit_log"][0]
+        assert audit["outputs"]["needs_reorder"] is True
+
+    @pytest.mark.asyncio
+    async def test_custom_parameters(self) -> None:
+        """Test optimizer with custom lead time and service level."""
+        from src.agents.procurement import inventory_optimizer_async
+
+        sku_id = str(uuid4())
+        state = create_initial_state(
+            sku_id=sku_id,
+            sku="UFBub250",
+            current_inventory=500,
+        )
+        state["forecast"] = [
+            {"week": 1, "yhat": 100.0, "yhat_lower": 80.0, "yhat_upper": 120.0}
+        ]
+
+        mock_session = AsyncMock()
+
+        with patch("src.services.metrics.get_current_inventory") as mock_inv:
+            mock_inv.return_value = 500
+
+            result = await inventory_optimizer_async(
+                state,
+                mock_session,
+                lead_time_days=21,  # 3 weeks
+                target_weeks_supply=8,  # 8 weeks
+                service_level=0.99,  # 99% service level
+            )
+
+        audit = result["audit_log"][0]
+        assert audit["inputs"]["lead_time_days"] == 21
+        assert audit["inputs"]["target_weeks_supply"] == 8
+        assert audit["inputs"]["service_level"] == 0.99
+
+    @pytest.mark.asyncio
+    async def test_updates_current_inventory_from_db(self) -> None:
+        """Test that current inventory is updated from database."""
+        from src.agents.procurement import inventory_optimizer_async
+
+        sku_id = str(uuid4())
+        state = create_initial_state(
+            sku_id=sku_id,
+            sku="UFBub250",
+            current_inventory=100,  # State says 100
+        )
+        state["forecast"] = [
+            {"week": 1, "yhat": 50.0, "yhat_lower": 40.0, "yhat_upper": 60.0}
+        ]
+
+        mock_session = AsyncMock()
+
+        with patch("src.services.metrics.get_current_inventory") as mock_inv:
+            mock_inv.return_value = 250  # DB says 250
+
+            result = await inventory_optimizer_async(state, mock_session)
+
+        # Should update state with accurate DB value
+        assert result["current_inventory"] == 250
+
+    @pytest.mark.asyncio
+    async def test_handles_db_error_gracefully(self) -> None:
+        """Test that database errors are handled gracefully."""
+        from src.agents.procurement import inventory_optimizer_async
+
+        sku_id = str(uuid4())
+        state = create_initial_state(
+            sku_id=sku_id,
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        state["forecast"] = [
+            {"week": 1, "yhat": 50.0, "yhat_lower": 40.0, "yhat_upper": 60.0}
+        ]
+
+        mock_session = AsyncMock()
+
+        with patch("src.services.metrics.get_current_inventory") as mock_inv:
+            mock_inv.side_effect = Exception("Database connection failed")
+
+            # Should fall back to state value, not fail
+            result = await inventory_optimizer_async(state, mock_session)
+
+        assert result["workflow_status"] == WorkflowStatus.ANALYZING_VENDOR.value
+        # Uses fallback value from state
+        audit = result["audit_log"][0]
+        assert audit["inputs"]["current_inventory"] == 100
+
+
+class TestCreateOptimizerErrorResponse:
+    """Tests for _create_optimizer_error_response helper."""
+
+    def test_returns_zero_values(self) -> None:
+        """Test that error response has zero values."""
+        from src.agents.procurement import _create_optimizer_error_response
+
+        result = _create_optimizer_error_response(
+            sku="UFBub250",
+            error_message="Test error",
+            forecast_confidence=0.85,
+        )
+        assert result["safety_stock"] == 0
+        assert result["reorder_point"] == 0
+        assert result["recommended_quantity"] == 0
+
+    def test_sets_failed_status(self) -> None:
+        """Test that error response sets failed workflow status."""
+        from src.agents.procurement import _create_optimizer_error_response
+
+        result = _create_optimizer_error_response(
+            sku="UFBub250",
+            error_message="Test error",
+            forecast_confidence=0.85,
+        )
+        assert result["workflow_status"] == WorkflowStatus.FAILED.value
+
+    def test_includes_error_message(self) -> None:
+        """Test that error response includes the error message."""
+        from src.agents.procurement import _create_optimizer_error_response
+
+        result = _create_optimizer_error_response(
+            sku="UFBub250",
+            error_message="Something went wrong",
+            forecast_confidence=0.85,
+        )
+        assert result["error_message"] == "Something went wrong"
+
+    def test_creates_audit_entry(self) -> None:
+        """Test that error response creates audit log entry."""
+        from src.agents.procurement import _create_optimizer_error_response
+
+        result = _create_optimizer_error_response(
+            sku="UFBub250",
+            error_message="Test error",
+            forecast_confidence=0.85,
+        )
+        assert len(result["audit_log"]) == 1
+        assert result["audit_log"][0]["agent"] == "inventory_optimizer"
+        assert result["audit_log"][0]["action"] == "optimization_error"
+        assert result["audit_log"][0]["confidence"] == 0.0
+
+
+class TestInventoryOptimizerIntegration:
+    """Integration tests for inventory optimizer in workflow context."""
+
+    def test_workflow_flows_through_optimizer(self) -> None:
+        """Test that workflow correctly flows through optimizer."""
+        compiled = compile_workflow(interrupt_before=[])
+
+        state = create_initial_state(
+            sku_id=str(uuid4()),
+            sku="UFBub250",
+            current_inventory=100,
+        )
+
+        config = {"configurable": {"thread_id": "test-optimizer-1"}}
+        result = compiled.invoke(state, config)
+
+        # Should have optimizer output
+        assert result["safety_stock"] >= 0
+        assert result["reorder_point"] >= 0
+
+    def test_optimizer_output_used_by_vendor_analyzer(self) -> None:
+        """Test that optimizer output flows to vendor analyzer."""
+        compiled = compile_workflow(interrupt_before=[])
+
+        state = create_initial_state(
+            sku_id=str(uuid4()),
+            sku="UFBub250",
+            current_inventory=1000,
+        )
+
+        config = {"configurable": {"thread_id": "test-optimizer-2"}}
+        result = compiled.invoke(state, config)
+
+        # Vendor analyzer should use recommended_quantity
+        assert result["order_value"] >= 0  # Calculated from quantity × price
