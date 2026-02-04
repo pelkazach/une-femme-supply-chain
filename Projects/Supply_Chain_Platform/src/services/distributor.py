@@ -10,9 +10,18 @@ import csv
 import io
 from dataclasses import dataclass
 from datetime import date, datetime
+from enum import Enum
 from typing import Any
 
 import pandas as pd
+
+
+class Distributor(str, Enum):
+    """Supported distributor types."""
+
+    RNDC = "RNDC"
+    SOUTHERN_GLAZERS = "Southern Glazers"
+    WINEBOW = "Winebow"
 
 
 @dataclass
@@ -28,6 +37,8 @@ class ParsedRow:
     description: str | None = None
     unit_price: float | None = None
     extended_amount: float | None = None
+    cases: int | None = None
+    bottles: int | None = None
 
 
 @dataclass
@@ -71,6 +82,20 @@ RNDC_OPTIONAL_COLUMNS = {
     "description": ["description", "item_description", "product_name", "desc"],
     "unit_price": ["unit price", "unit_price", "unitprice", "price"],
     "extended": ["extended", "amount", "total", "ext_amount"],
+}
+
+# Southern Glazers column mappings (case-insensitive)
+SOUTHERN_GLAZERS_REQUIRED_COLUMNS = {
+    "date": ["ship date", "ship_date", "shipdate", "date"],
+    "sku": ["item code", "item_code", "itemcode", "sku", "product_code"],
+    "bottles": ["bottles", "units", "qty", "quantity"],
+}
+
+SOUTHERN_GLAZERS_OPTIONAL_COLUMNS = {
+    "customer": ["customer", "account", "customer_name", "account_name"],
+    "description": ["item description", "item_description", "description", "product_name"],
+    "cases": ["cases", "case_qty", "case_count"],
+    "amount": ["amount", "total", "extended", "ext_amount"],
 }
 
 
@@ -567,6 +592,396 @@ def parse_rndc_report(content: bytes, extension: str) -> ParseResult:
         return parse_rndc_csv(content)
     elif extension in (".xlsx", ".xls"):
         return parse_rndc_excel(content)
+    else:
+        return ParseResult(
+            rows=[],
+            errors=[
+                RowError(
+                    row_number=0,
+                    field=None,
+                    message=f"Unsupported file extension: {extension}",
+                )
+            ],
+            total_rows=0,
+        )
+
+
+def parse_southern_glazers_csv(content: bytes) -> ParseResult:
+    """Parse a Southern Glazers report from CSV content.
+
+    Southern Glazers format:
+    Ship Date,Customer,Item Code,Item Description,Cases,Bottles,Amount
+
+    Args:
+        content: CSV file content as bytes.
+
+    Returns:
+        ParseResult with parsed rows and any errors.
+    """
+    rows: list[ParsedRow] = []
+    errors: list[RowError] = []
+    total_rows = 0
+
+    try:
+        # Decode content
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            text = content.decode("latin-1")
+
+        reader = csv.reader(io.StringIO(text))
+
+        # Read header
+        try:
+            headers = next(reader)
+        except StopIteration:
+            errors.append(
+                RowError(row_number=0, field=None, message="No data rows found")
+            )
+            return ParseResult(rows=rows, errors=errors, total_rows=0)
+
+        # Find required columns
+        date_idx, _ = _find_column(headers, SOUTHERN_GLAZERS_REQUIRED_COLUMNS["date"])
+        sku_idx, _ = _find_column(headers, SOUTHERN_GLAZERS_REQUIRED_COLUMNS["sku"])
+        bottles_idx, _ = _find_column(
+            headers, SOUTHERN_GLAZERS_REQUIRED_COLUMNS["bottles"]
+        )
+
+        # Find optional columns
+        customer_idx, _ = _find_column(
+            headers, SOUTHERN_GLAZERS_OPTIONAL_COLUMNS["customer"]
+        )
+        desc_idx, _ = _find_column(
+            headers, SOUTHERN_GLAZERS_OPTIONAL_COLUMNS["description"]
+        )
+        cases_idx, _ = _find_column(headers, SOUTHERN_GLAZERS_OPTIONAL_COLUMNS["cases"])
+        amount_idx, _ = _find_column(
+            headers, SOUTHERN_GLAZERS_OPTIONAL_COLUMNS["amount"]
+        )
+
+        # Check required columns
+        missing_cols = []
+        if date_idx is None:
+            missing_cols.append("Ship Date")
+        if sku_idx is None:
+            missing_cols.append("Item Code")
+        if bottles_idx is None:
+            missing_cols.append("Bottles")
+
+        if missing_cols:
+            errors.append(
+                RowError(
+                    row_number=0,
+                    field=None,
+                    message=f"Missing required columns: {', '.join(missing_cols)}",
+                )
+            )
+            return ParseResult(rows=rows, errors=errors, total_rows=0)
+
+        # Type narrowing for mypy - at this point we know these are not None
+        assert date_idx is not None
+        assert sku_idx is not None
+        assert bottles_idx is not None
+
+        # Parse data rows
+        for row_num, row in enumerate(reader, start=2):  # 1-indexed, header is row 1
+            total_rows += 1
+
+            # Skip empty rows
+            if not any(cell.strip() for cell in row):
+                continue
+
+            # Parse required fields
+            date_result = _parse_date(row[date_idx], row_num)
+            if isinstance(date_result, RowError):
+                errors.append(date_result)
+                continue
+
+            sku_value = row[sku_idx].strip() if row[sku_idx] else ""
+            if not sku_value:
+                errors.append(
+                    RowError(
+                        row_number=row_num,
+                        field="sku",
+                        message="Item Code is required",
+                    )
+                )
+                continue
+
+            bottles_result = _parse_quantity(row[bottles_idx], row_num)
+            if isinstance(bottles_result, RowError):
+                # Override field name for clarity
+                errors.append(
+                    RowError(
+                        row_number=row_num,
+                        field="bottles",
+                        message=bottles_result.message.replace(
+                            "quantity", "Bottles"
+                        ).replace("Quantity", "Bottles"),
+                    )
+                )
+                continue
+
+            # Parse optional fields
+            customer = (
+                row[customer_idx].strip()
+                if customer_idx is not None and len(row) > customer_idx
+                else None
+            )
+            description = (
+                row[desc_idx].strip()
+                if desc_idx is not None and len(row) > desc_idx
+                else None
+            )
+            cases = (
+                _parse_quantity(row[cases_idx], row_num)
+                if cases_idx is not None and len(row) > cases_idx
+                else None
+            )
+            # If cases parsing failed, just set to None (optional field)
+            if isinstance(cases, RowError):
+                cases = None
+            amount = (
+                _parse_float(row[amount_idx])
+                if amount_idx is not None and len(row) > amount_idx
+                else None
+            )
+
+            rows.append(
+                ParsedRow(
+                    date=date_result,
+                    sku=sku_value,
+                    quantity=bottles_result,
+                    customer=customer,
+                    description=description,
+                    cases=cases,
+                    bottles=bottles_result,
+                    extended_amount=amount,
+                )
+            )
+
+    except Exception as e:
+        errors.append(
+            RowError(
+                row_number=0,
+                field=None,
+                message=f"Error parsing CSV: {e}",
+            )
+        )
+
+    return ParseResult(rows=rows, errors=errors, total_rows=total_rows)
+
+
+def parse_southern_glazers_excel(content: bytes) -> ParseResult:
+    """Parse a Southern Glazers report from Excel content.
+
+    Southern Glazers format:
+    Ship Date,Customer,Item Code,Item Description,Cases,Bottles,Amount
+
+    Args:
+        content: Excel file content as bytes.
+
+    Returns:
+        ParseResult with parsed rows and any errors.
+    """
+    rows: list[ParsedRow] = []
+    errors: list[RowError] = []
+    total_rows = 0
+
+    try:
+        # Read Excel file
+        df = pd.read_excel(io.BytesIO(content), sheet_name=0)
+
+        if df.empty:
+            errors.append(
+                RowError(row_number=0, field=None, message="No data rows found")
+            )
+            return ParseResult(rows=rows, errors=errors, total_rows=0)
+
+        # Get headers
+        headers = [str(col) for col in df.columns]
+
+        # Find required columns
+        date_col, date_name = _find_column(
+            headers, SOUTHERN_GLAZERS_REQUIRED_COLUMNS["date"]
+        )
+        sku_col, sku_name = _find_column(
+            headers, SOUTHERN_GLAZERS_REQUIRED_COLUMNS["sku"]
+        )
+        bottles_col, bottles_name = _find_column(
+            headers, SOUTHERN_GLAZERS_REQUIRED_COLUMNS["bottles"]
+        )
+
+        # Find optional columns
+        customer_col, customer_name = _find_column(
+            headers, SOUTHERN_GLAZERS_OPTIONAL_COLUMNS["customer"]
+        )
+        desc_col, desc_name = _find_column(
+            headers, SOUTHERN_GLAZERS_OPTIONAL_COLUMNS["description"]
+        )
+        cases_col, cases_name = _find_column(
+            headers, SOUTHERN_GLAZERS_OPTIONAL_COLUMNS["cases"]
+        )
+        amount_col, amount_name = _find_column(
+            headers, SOUTHERN_GLAZERS_OPTIONAL_COLUMNS["amount"]
+        )
+
+        # Check required columns
+        missing_cols = []
+        if date_col is None:
+            missing_cols.append("Ship Date")
+        if sku_col is None:
+            missing_cols.append("Item Code")
+        if bottles_col is None:
+            missing_cols.append("Bottles")
+
+        if missing_cols:
+            errors.append(
+                RowError(
+                    row_number=0,
+                    field=None,
+                    message=f"Missing required columns: {', '.join(missing_cols)}",
+                )
+            )
+            return ParseResult(rows=rows, errors=errors, total_rows=0)
+
+        # Type narrowing for mypy - at this point we know these are not None
+        assert date_col is not None
+        assert sku_col is not None
+        assert bottles_col is not None
+
+        # Get actual column names for accessing data
+        date_key = headers[date_col]
+        sku_key = headers[sku_col]
+        bottles_key = headers[bottles_col]
+        customer_key = headers[customer_col] if customer_col is not None else None
+        desc_key = headers[desc_col] if desc_col is not None else None
+        cases_key = headers[cases_col] if cases_col is not None else None
+        amount_key = headers[amount_col] if amount_col is not None else None
+
+        # Parse data rows
+        for idx, row in df.iterrows():
+            row_num = idx + 2  # 1-indexed, header is row 1
+            total_rows += 1
+
+            # Parse required fields
+            date_value = row[date_key]
+            # Handle pandas NaT
+            if pd.isna(date_value):
+                errors.append(
+                    RowError(
+                        row_number=row_num,
+                        field="date",
+                        message="Ship Date is required",
+                    )
+                )
+                continue
+
+            date_result = _parse_date(date_value, row_num)
+            if isinstance(date_result, RowError):
+                errors.append(date_result)
+                continue
+
+            sku_value = row[sku_key]
+            if pd.isna(sku_value) or not str(sku_value).strip():
+                errors.append(
+                    RowError(
+                        row_number=row_num,
+                        field="sku",
+                        message="Item Code is required",
+                    )
+                )
+                continue
+            sku_value = str(sku_value).strip()
+
+            bottles_value = row[bottles_key]
+            if pd.isna(bottles_value):
+                errors.append(
+                    RowError(
+                        row_number=row_num,
+                        field="bottles",
+                        message="Bottles is required",
+                    )
+                )
+                continue
+
+            bottles_result = _parse_quantity(bottles_value, row_num)
+            if isinstance(bottles_result, RowError):
+                errors.append(
+                    RowError(
+                        row_number=row_num,
+                        field="bottles",
+                        message=bottles_result.message.replace(
+                            "quantity", "Bottles"
+                        ).replace("Quantity", "Bottles"),
+                    )
+                )
+                continue
+
+            # Parse optional fields
+            customer = (
+                str(row[customer_key]).strip()
+                if customer_key and not pd.isna(row.get(customer_key))
+                else None
+            )
+            description = (
+                str(row[desc_key]).strip()
+                if desc_key and not pd.isna(row.get(desc_key))
+                else None
+            )
+
+            cases = None
+            if cases_key and not pd.isna(row.get(cases_key)):
+                cases_result = _parse_quantity(row[cases_key], row_num)
+                if not isinstance(cases_result, RowError):
+                    cases = cases_result
+
+            amount = (
+                _parse_float(row[amount_key])
+                if amount_key and not pd.isna(row.get(amount_key))
+                else None
+            )
+
+            rows.append(
+                ParsedRow(
+                    date=date_result,
+                    sku=sku_value,
+                    quantity=bottles_result,
+                    customer=customer,
+                    description=description,
+                    cases=cases,
+                    bottles=bottles_result,
+                    extended_amount=amount,
+                )
+            )
+
+    except Exception as e:
+        errors.append(
+            RowError(
+                row_number=0,
+                field=None,
+                message=f"Error parsing Excel file: {e}",
+            )
+        )
+
+    return ParseResult(rows=rows, errors=errors, total_rows=total_rows)
+
+
+def parse_southern_glazers_report(content: bytes, extension: str) -> ParseResult:
+    """Parse a Southern Glazers report from either CSV or Excel format.
+
+    Args:
+        content: File content as bytes.
+        extension: File extension ('.csv', '.xlsx', or '.xls').
+
+    Returns:
+        ParseResult with parsed rows and any errors.
+    """
+    extension = extension.lower()
+    if extension == ".csv":
+        return parse_southern_glazers_csv(content)
+    elif extension in (".xlsx", ".xls"):
+        return parse_southern_glazers_excel(content)
     else:
         return ParseResult(
             rows=[],

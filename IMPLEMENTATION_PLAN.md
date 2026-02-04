@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 14
+- Completed: 15
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -94,9 +94,11 @@
   - Completed: 2026-02-03
   - Notes: Created src/services/distributor.py with parse_rndc_report() function supporting both CSV and Excel formats. Features include: flexible column name matching (date, ship_date, etc.), multiple date format support (YYYY-MM-DD, MM/DD/YYYY, etc.), optional field parsing (Invoice, Account, Description, Unit Price, Extended), quantity parsing with comma separators. Added openpyxl dependency for Excel support. Integrated parser with POST /upload endpoint (distributor="RNDC"). 56 tests covering parsing functions, CSV, Excel, and edge cases (empty files, missing columns, invalid data).
 
-- [ ] **Task 1.4.3**: Implement Southern Glazers report parser
+- [x] **Task 1.4.3**: Implement Southern Glazers report parser
   - Spec: specs/03-distributor-data-processing.md
   - Acceptance: Parses Ship Date, Customer, Item Code, Cases, Bottles fields
+  - Completed: 2026-02-03
+  - Notes: Created parse_southern_glazers_csv() and parse_southern_glazers_excel() functions in src/services/distributor.py. Supports flexible column name matching (Ship Date/date, Item Code/product_code, Bottles/units/qty/quantity). ParsedRow extended with cases and bottles fields. Integrated with POST /upload endpoint (distributor="Southern Glazers"). 24 new tests covering CSV, Excel, edge cases (empty files, missing columns, invalid data).
 
 - [ ] **Task 1.4.4**: Implement Winebow report parser
   - Spec: specs/03-distributor-data-processing.md

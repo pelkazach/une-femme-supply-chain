@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
-from src.services.distributor import parse_rndc_report
+from src.services.distributor import parse_rndc_report, parse_southern_glazers_report
 
 # Maximum file size: 10MB
 MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -193,8 +193,9 @@ async def upload_distributor_file(
     contents = await validate_file_size(file)
 
     # Parse the file based on distributor type
-    # For now, only RNDC is implemented
-    if distributor and distributor.upper() == "RNDC":
+    distributor_upper = distributor.upper() if distributor else None
+
+    if distributor_upper == "RNDC":
         parse_result = parse_rndc_report(contents, extension)
         result = ProcessingResult(
             filename=filename,
@@ -216,9 +217,31 @@ async def upload_distributor_file(
             if parse_result.success_count > 0
             else "File parsing completed with errors."
         )
+    elif distributor_upper in ("SOUTHERN GLAZERS", "SOUTHERN_GLAZERS", "SOUTHERNGLAZERS"):
+        parse_result = parse_southern_glazers_report(contents, extension)
+        result = ProcessingResult(
+            filename=filename,
+            distributor="Southern Glazers",
+            total_rows=parse_result.total_rows,
+            success_count=parse_result.success_count,
+            error_count=parse_result.error_count,
+            errors=[
+                ValidationError(
+                    row=err.row_number,
+                    field=err.field,
+                    message=err.message,
+                )
+                for err in parse_result.errors
+            ],
+        )
+        message = (
+            f"File parsed successfully. {parse_result.success_count} rows processed."
+            if parse_result.success_count > 0
+            else "File parsing completed with errors."
+        )
     else:
         # For other distributors, return placeholder
-        # Parsers for Southern Glazers and Winebow will be implemented in tasks 1.4.3-1.4.4
+        # Parser for Winebow will be implemented in task 1.4.4
         result = ProcessingResult(
             filename=filename,
             distributor=distributor,

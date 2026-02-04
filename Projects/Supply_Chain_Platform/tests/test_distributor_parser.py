@@ -13,6 +13,9 @@ from src.services.distributor import (
     parse_rndc_csv,
     parse_rndc_excel,
     parse_rndc_report,
+    parse_southern_glazers_csv,
+    parse_southern_glazers_excel,
+    parse_southern_glazers_report,
     _find_column,
     _parse_date,
     _parse_float,
@@ -627,3 +630,365 @@ class TestParseResult:
         )
 
         assert result.error_count == 2
+
+
+class TestParseSouthernGlazersCsv:
+    """Tests for parse_southern_glazers_csv function."""
+
+    def test_parse_valid_csv(self) -> None:
+        """Test parsing valid Southern Glazers CSV file."""
+        csv_content = b"""Ship Date,Customer,Item Code,Item Description,Cases,Bottles,Amount
+01/15/2026,XYZ Wine Bar,UFRos250,Une Femme Rose 250ml,10,120,1558.80
+01/16/2026,ABC Liquor,UFBub250,Une Femme Brut 250ml,5,60,779.40"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert isinstance(result, ParseResult)
+        assert result.total_rows == 2
+        assert result.success_count == 2
+        assert result.error_count == 0
+        assert len(result.rows) == 2
+
+        # Check first row
+        row1 = result.rows[0]
+        assert row1.date == date(2026, 1, 15)
+        assert row1.sku == "UFRos250"
+        assert row1.quantity == 120
+        assert row1.bottles == 120
+        assert row1.cases == 10
+        assert row1.customer == "XYZ Wine Bar"
+        assert row1.description == "Une Femme Rose 250ml"
+        assert row1.extended_amount == 1558.80
+
+    def test_parse_csv_with_iso_date_format(self) -> None:
+        """Test parsing CSV with ISO date format."""
+        csv_content = b"""Ship Date,Item Code,Bottles
+2026-01-15,UFBub250,24"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 1
+        assert result.rows[0].date == date(2026, 1, 15)
+
+    def test_parse_csv_minimal_columns(self) -> None:
+        """Test parsing CSV with only required columns."""
+        csv_content = b"""Ship Date,Item Code,Bottles
+01/15/2026,UFRos250,120"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 1
+        row = result.rows[0]
+        assert row.date == date(2026, 1, 15)
+        assert row.sku == "UFRos250"
+        assert row.quantity == 120
+        assert row.bottles == 120
+        assert row.cases is None
+        assert row.customer is None
+
+    def test_parse_csv_alternative_column_names(self) -> None:
+        """Test parsing CSV with alternative column names."""
+        csv_content = b"""date,product_code,units
+01/15/2026,UFBub250,24"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 1
+        assert result.rows[0].sku == "UFBub250"
+        assert result.rows[0].quantity == 24
+
+    def test_parse_csv_missing_required_column(self) -> None:
+        """Test error when required column is missing."""
+        csv_content = b"""Ship Date,Item Code
+01/15/2026,UFRos250"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "Missing required columns" in result.errors[0].message
+        assert "Bottles" in result.errors[0].message
+
+    def test_parse_csv_empty_file(self) -> None:
+        """Test error on empty file."""
+        csv_content = b""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "No data rows" in result.errors[0].message
+
+    def test_parse_csv_header_only(self) -> None:
+        """Test file with header but no data rows."""
+        csv_content = b"""Ship Date,Item Code,Bottles"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.total_rows == 0
+        assert result.success_count == 0
+        assert result.error_count == 0
+
+    def test_parse_csv_invalid_date_row(self) -> None:
+        """Test handling of row with invalid date."""
+        csv_content = b"""Ship Date,Item Code,Bottles
+01/15/2026,UFBub250,24
+invalid-date,UFRos250,12
+01/17/2026,UFRed250,36"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.total_rows == 3
+        assert result.success_count == 2
+        assert result.error_count == 1
+        assert result.errors[0].row_number == 3
+        assert result.errors[0].field == "date"
+
+    def test_parse_csv_missing_item_code(self) -> None:
+        """Test handling of row with missing Item Code."""
+        csv_content = b"""Ship Date,Item Code,Bottles
+01/15/2026,,120"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "Item Code is required" in result.errors[0].message
+
+    def test_parse_csv_missing_bottles(self) -> None:
+        """Test handling of row with missing Bottles."""
+        csv_content = b"""Ship Date,Item Code,Bottles
+01/15/2026,UFRos250,"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "Bottles" in result.errors[0].message
+
+    def test_parse_csv_invalid_bottles(self) -> None:
+        """Test handling of row with invalid Bottles."""
+        csv_content = b"""Ship Date,Item Code,Bottles
+01/15/2026,UFRos250,abc"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "Bottles" in result.errors[0].message or "Invalid" in result.errors[0].message
+
+    def test_parse_csv_skip_empty_rows(self) -> None:
+        """Test that empty rows are skipped."""
+        csv_content = b"""Ship Date,Item Code,Bottles
+01/15/2026,UFBub250,24
+
+01/16/2026,UFRos250,12"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 2
+
+    def test_parse_csv_100_rows(self) -> None:
+        """Test parsing 100 rows (acceptance criteria)."""
+        header = b"Ship Date,Customer,Item Code,Cases,Bottles\n"
+        rows = [
+            f"01/{(i % 28) + 1:02d}/2026,Customer{i},UFRos250,{i},{i * 12}\n".encode()
+            for i in range(1, 101)
+        ]
+        csv_content = header + b"".join(rows)
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.total_rows == 100
+        assert result.success_count == 100
+        assert result.error_count == 0
+
+    def test_parse_csv_bottles_with_comma(self) -> None:
+        """Test parsing bottles with thousands separator."""
+        csv_content = b"""Ship Date,Item Code,Bottles
+01/15/2026,UFRos250,"1,234" """
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 1
+        assert result.rows[0].quantity == 1234
+        assert result.rows[0].bottles == 1234
+
+    def test_parse_csv_invalid_cases_still_succeeds(self) -> None:
+        """Test that invalid cases value doesn't fail the row (optional field)."""
+        csv_content = b"""Ship Date,Item Code,Cases,Bottles
+01/15/2026,UFRos250,abc,120"""
+
+        result = parse_southern_glazers_csv(csv_content)
+
+        assert result.success_count == 1
+        assert result.rows[0].cases is None
+        assert result.rows[0].bottles == 120
+
+
+class TestParseSouthernGlazersExcel:
+    """Tests for parse_southern_glazers_excel function."""
+
+    def _create_excel(self, data: dict) -> bytes:
+        """Create an Excel file from dictionary data."""
+        df = pd.DataFrame(data)
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False)
+        return buffer.getvalue()
+
+    def test_parse_valid_excel(self) -> None:
+        """Test parsing valid Southern Glazers Excel file."""
+        excel_content = self._create_excel(
+            {
+                "Ship Date": [date(2026, 1, 15), date(2026, 1, 16)],
+                "Customer": ["XYZ Wine Bar", "ABC Liquor"],
+                "Item Code": ["UFRos250", "UFBub250"],
+                "Item Description": ["Une Femme Rose 250ml", "Une Femme Brut 250ml"],
+                "Cases": [10, 5],
+                "Bottles": [120, 60],
+                "Amount": [1558.80, 779.40],
+            }
+        )
+
+        result = parse_southern_glazers_excel(excel_content)
+
+        assert result.total_rows == 2
+        assert result.success_count == 2
+        assert result.error_count == 0
+
+        row1 = result.rows[0]
+        assert row1.date == date(2026, 1, 15)
+        assert row1.sku == "UFRos250"
+        assert row1.quantity == 120
+        assert row1.bottles == 120
+        assert row1.cases == 10
+        assert row1.customer == "XYZ Wine Bar"
+
+    def test_parse_excel_minimal_columns(self) -> None:
+        """Test parsing Excel with only required columns."""
+        excel_content = self._create_excel(
+            {
+                "Ship Date": [date(2026, 1, 15)],
+                "Item Code": ["UFRos250"],
+                "Bottles": [120],
+            }
+        )
+
+        result = parse_southern_glazers_excel(excel_content)
+
+        assert result.success_count == 1
+        row = result.rows[0]
+        assert row.cases is None
+        assert row.customer is None
+
+    def test_parse_excel_empty_file(self) -> None:
+        """Test error on empty Excel file."""
+        excel_content = self._create_excel({})
+
+        result = parse_southern_glazers_excel(excel_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert (
+            "No data rows" in result.errors[0].message
+            or "Missing required" in result.errors[0].message
+        )
+
+    def test_parse_excel_missing_required_column(self) -> None:
+        """Test error when required column is missing."""
+        excel_content = self._create_excel(
+            {
+                "Ship Date": [date(2026, 1, 15)],
+                "Item Code": ["UFRos250"],
+                # Missing Bottles
+            }
+        )
+
+        result = parse_southern_glazers_excel(excel_content)
+
+        assert result.error_count >= 1
+        assert any(
+            "Missing required" in e.message or "Bottles" in e.message
+            for e in result.errors
+        )
+
+    def test_parse_excel_invalid_date_row(self) -> None:
+        """Test handling of row with invalid date in Excel."""
+        excel_content = self._create_excel(
+            {
+                "Ship Date": [date(2026, 1, 15), None, date(2026, 1, 17)],
+                "Item Code": ["UFRos250", "UFBub250", "UFRed250"],
+                "Bottles": [120, 60, 36],
+            }
+        )
+
+        result = parse_southern_glazers_excel(excel_content)
+
+        assert result.total_rows == 3
+        assert result.success_count == 2
+        assert result.error_count == 1
+
+    def test_parse_excel_100_rows(self) -> None:
+        """Test parsing 100 rows in Excel (acceptance criteria)."""
+        excel_content = self._create_excel(
+            {
+                "Ship Date": [date(2026, 1, (i % 28) + 1) for i in range(100)],
+                "Customer": [f"Customer{i}" for i in range(100)],
+                "Item Code": ["UFRos250"] * 100,
+                "Cases": list(range(1, 101)),
+                "Bottles": [i * 12 for i in range(1, 101)],
+            }
+        )
+
+        result = parse_southern_glazers_excel(excel_content)
+
+        assert result.total_rows == 100
+        assert result.success_count == 100
+        assert result.error_count == 0
+
+
+class TestParseSouthernGlazersReport:
+    """Tests for parse_southern_glazers_report function (unified interface)."""
+
+    def test_parse_csv_extension(self) -> None:
+        """Test that .csv extension routes to CSV parser."""
+        csv_content = b"""Ship Date,Item Code,Bottles
+01/15/2026,UFRos250,120"""
+
+        result = parse_southern_glazers_report(csv_content, ".csv")
+
+        assert result.success_count == 1
+
+    def test_parse_xlsx_extension(self) -> None:
+        """Test that .xlsx extension routes to Excel parser."""
+        df = pd.DataFrame(
+            {
+                "Ship Date": [date(2026, 1, 15)],
+                "Item Code": ["UFRos250"],
+                "Bottles": [120],
+            }
+        )
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False)
+        excel_content = buffer.getvalue()
+
+        result = parse_southern_glazers_report(excel_content, ".xlsx")
+
+        assert result.success_count == 1
+
+    def test_parse_uppercase_extension(self) -> None:
+        """Test that uppercase extension is handled."""
+        csv_content = b"""Ship Date,Item Code,Bottles
+01/15/2026,UFRos250,120"""
+
+        result = parse_southern_glazers_report(csv_content, ".CSV")
+
+        assert result.success_count == 1
+
+    def test_parse_unsupported_extension(self) -> None:
+        """Test error for unsupported extension."""
+        result = parse_southern_glazers_report(b"content", ".pdf")
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "Unsupported file extension" in result.errors[0].message
