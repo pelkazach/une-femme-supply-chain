@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 15
+- Completed: 16
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -100,9 +100,11 @@
   - Completed: 2026-02-03
   - Notes: Created parse_southern_glazers_csv() and parse_southern_glazers_excel() functions in src/services/distributor.py. Supports flexible column name matching (Ship Date/date, Item Code/product_code, Bottles/units/qty/quantity). ParsedRow extended with cases and bottles fields. Integrated with POST /upload endpoint (distributor="Southern Glazers"). 24 new tests covering CSV, Excel, edge cases (empty files, missing columns, invalid data).
 
-- [ ] **Task 1.4.4**: Implement Winebow report parser
+- [x] **Task 1.4.4**: Implement Winebow report parser
   - Spec: specs/03-distributor-data-processing.md
   - Acceptance: Parses transaction_date, product_code, quantity fields
+  - Completed: 2026-02-03
+  - Notes: Created parse_winebow_csv() and parse_winebow_excel() functions in src/services/distributor.py. Supports flexible column name matching (transaction_date/date/ship_date, product_code/sku/item_code, quantity/qty/units). Integrated with POST /upload endpoint (distributor="Winebow"). 26 new tests covering CSV, Excel, edge cases (empty files, missing columns, invalid data).
 
 - [ ] **Task 1.4.5**: Create SKU validation and error reporting
   - Spec: specs/03-distributor-data-processing.md

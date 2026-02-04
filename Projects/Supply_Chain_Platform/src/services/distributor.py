@@ -98,6 +98,19 @@ SOUTHERN_GLAZERS_OPTIONAL_COLUMNS = {
     "amount": ["amount", "total", "extended", "ext_amount"],
 }
 
+# Winebow column mappings (case-insensitive)
+WINEBOW_REQUIRED_COLUMNS = {
+    "date": ["transaction_date", "trans_date", "date", "ship_date"],
+    "sku": ["product_code", "sku", "item_code", "itemcode"],
+    "quantity": ["quantity", "qty", "units", "qty_sold"],
+}
+
+WINEBOW_OPTIONAL_COLUMNS = {
+    "customer": ["customer_name", "customer", "account", "account_name"],
+    "description": ["product_name", "description", "item_description", "desc"],
+    "total": ["total", "amount", "extended", "ext_amount"],
+}
+
 
 def _find_column(
     headers: list[str], possible_names: list[str]
@@ -982,6 +995,341 @@ def parse_southern_glazers_report(content: bytes, extension: str) -> ParseResult
         return parse_southern_glazers_csv(content)
     elif extension in (".xlsx", ".xls"):
         return parse_southern_glazers_excel(content)
+    else:
+        return ParseResult(
+            rows=[],
+            errors=[
+                RowError(
+                    row_number=0,
+                    field=None,
+                    message=f"Unsupported file extension: {extension}",
+                )
+            ],
+            total_rows=0,
+        )
+
+
+def parse_winebow_csv(content: bytes) -> ParseResult:
+    """Parse a Winebow report from CSV content.
+
+    Winebow format:
+    transaction_date,customer_name,product_code,product_name,quantity,total
+
+    Args:
+        content: CSV file content as bytes.
+
+    Returns:
+        ParseResult with parsed rows and any errors.
+    """
+    rows: list[ParsedRow] = []
+    errors: list[RowError] = []
+    total_rows = 0
+
+    try:
+        # Decode content
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            text = content.decode("latin-1")
+
+        reader = csv.reader(io.StringIO(text))
+
+        # Read header
+        try:
+            headers = next(reader)
+        except StopIteration:
+            errors.append(
+                RowError(row_number=0, field=None, message="No data rows found")
+            )
+            return ParseResult(rows=rows, errors=errors, total_rows=0)
+
+        # Find required columns
+        date_idx, _ = _find_column(headers, WINEBOW_REQUIRED_COLUMNS["date"])
+        sku_idx, _ = _find_column(headers, WINEBOW_REQUIRED_COLUMNS["sku"])
+        qty_idx, _ = _find_column(headers, WINEBOW_REQUIRED_COLUMNS["quantity"])
+
+        # Find optional columns
+        customer_idx, _ = _find_column(headers, WINEBOW_OPTIONAL_COLUMNS["customer"])
+        desc_idx, _ = _find_column(headers, WINEBOW_OPTIONAL_COLUMNS["description"])
+        total_idx, _ = _find_column(headers, WINEBOW_OPTIONAL_COLUMNS["total"])
+
+        # Check required columns
+        missing_cols = []
+        if date_idx is None:
+            missing_cols.append("transaction_date")
+        if sku_idx is None:
+            missing_cols.append("product_code")
+        if qty_idx is None:
+            missing_cols.append("quantity")
+
+        if missing_cols:
+            errors.append(
+                RowError(
+                    row_number=0,
+                    field=None,
+                    message=f"Missing required columns: {', '.join(missing_cols)}",
+                )
+            )
+            return ParseResult(rows=rows, errors=errors, total_rows=0)
+
+        # Type narrowing for mypy - at this point we know these are not None
+        assert date_idx is not None
+        assert sku_idx is not None
+        assert qty_idx is not None
+
+        # Parse data rows
+        for row_num, row in enumerate(reader, start=2):  # 1-indexed, header is row 1
+            total_rows += 1
+
+            # Skip empty rows
+            if not any(cell.strip() for cell in row):
+                continue
+
+            # Parse required fields
+            date_result = _parse_date(row[date_idx], row_num)
+            if isinstance(date_result, RowError):
+                errors.append(date_result)
+                continue
+
+            sku_value = row[sku_idx].strip() if row[sku_idx] else ""
+            if not sku_value:
+                errors.append(
+                    RowError(
+                        row_number=row_num,
+                        field="sku",
+                        message="product_code is required",
+                    )
+                )
+                continue
+
+            qty_result = _parse_quantity(row[qty_idx], row_num)
+            if isinstance(qty_result, RowError):
+                errors.append(qty_result)
+                continue
+
+            # Parse optional fields
+            customer = (
+                row[customer_idx].strip()
+                if customer_idx is not None and len(row) > customer_idx
+                else None
+            )
+            description = (
+                row[desc_idx].strip()
+                if desc_idx is not None and len(row) > desc_idx
+                else None
+            )
+            total_amount = (
+                _parse_float(row[total_idx])
+                if total_idx is not None and len(row) > total_idx
+                else None
+            )
+
+            rows.append(
+                ParsedRow(
+                    date=date_result,
+                    sku=sku_value,
+                    quantity=qty_result,
+                    customer=customer,
+                    description=description,
+                    extended_amount=total_amount,
+                )
+            )
+
+    except Exception as e:
+        errors.append(
+            RowError(
+                row_number=0,
+                field=None,
+                message=f"Error parsing CSV: {e}",
+            )
+        )
+
+    return ParseResult(rows=rows, errors=errors, total_rows=total_rows)
+
+
+def parse_winebow_excel(content: bytes) -> ParseResult:
+    """Parse a Winebow report from Excel content.
+
+    Winebow format:
+    transaction_date,customer_name,product_code,product_name,quantity,total
+
+    Args:
+        content: Excel file content as bytes.
+
+    Returns:
+        ParseResult with parsed rows and any errors.
+    """
+    rows: list[ParsedRow] = []
+    errors: list[RowError] = []
+    total_rows = 0
+
+    try:
+        # Read Excel file
+        df = pd.read_excel(io.BytesIO(content), sheet_name=0)
+
+        if df.empty:
+            errors.append(
+                RowError(row_number=0, field=None, message="No data rows found")
+            )
+            return ParseResult(rows=rows, errors=errors, total_rows=0)
+
+        # Get headers
+        headers = [str(col) for col in df.columns]
+
+        # Find required columns
+        date_col, date_name = _find_column(headers, WINEBOW_REQUIRED_COLUMNS["date"])
+        sku_col, sku_name = _find_column(headers, WINEBOW_REQUIRED_COLUMNS["sku"])
+        qty_col, qty_name = _find_column(headers, WINEBOW_REQUIRED_COLUMNS["quantity"])
+
+        # Find optional columns
+        customer_col, customer_name = _find_column(
+            headers, WINEBOW_OPTIONAL_COLUMNS["customer"]
+        )
+        desc_col, desc_name = _find_column(
+            headers, WINEBOW_OPTIONAL_COLUMNS["description"]
+        )
+        total_col, total_name = _find_column(
+            headers, WINEBOW_OPTIONAL_COLUMNS["total"]
+        )
+
+        # Check required columns
+        missing_cols = []
+        if date_col is None:
+            missing_cols.append("transaction_date")
+        if sku_col is None:
+            missing_cols.append("product_code")
+        if qty_col is None:
+            missing_cols.append("quantity")
+
+        if missing_cols:
+            errors.append(
+                RowError(
+                    row_number=0,
+                    field=None,
+                    message=f"Missing required columns: {', '.join(missing_cols)}",
+                )
+            )
+            return ParseResult(rows=rows, errors=errors, total_rows=0)
+
+        # Type narrowing for mypy - at this point we know these are not None
+        assert date_col is not None
+        assert sku_col is not None
+        assert qty_col is not None
+
+        # Get actual column names for accessing data
+        date_key = headers[date_col]
+        sku_key = headers[sku_col]
+        qty_key = headers[qty_col]
+        customer_key = headers[customer_col] if customer_col is not None else None
+        desc_key = headers[desc_col] if desc_col is not None else None
+        total_key = headers[total_col] if total_col is not None else None
+
+        # Parse data rows
+        for idx, row in df.iterrows():
+            row_num = idx + 2  # 1-indexed, header is row 1
+            total_rows += 1
+
+            # Parse required fields
+            date_value = row[date_key]
+            # Handle pandas NaT
+            if pd.isna(date_value):
+                errors.append(
+                    RowError(
+                        row_number=row_num,
+                        field="date",
+                        message="transaction_date is required",
+                    )
+                )
+                continue
+
+            date_result = _parse_date(date_value, row_num)
+            if isinstance(date_result, RowError):
+                errors.append(date_result)
+                continue
+
+            sku_value = row[sku_key]
+            if pd.isna(sku_value) or not str(sku_value).strip():
+                errors.append(
+                    RowError(
+                        row_number=row_num,
+                        field="sku",
+                        message="product_code is required",
+                    )
+                )
+                continue
+            sku_value = str(sku_value).strip()
+
+            qty_value = row[qty_key]
+            if pd.isna(qty_value):
+                errors.append(
+                    RowError(
+                        row_number=row_num,
+                        field="quantity",
+                        message="quantity is required",
+                    )
+                )
+                continue
+
+            qty_result = _parse_quantity(qty_value, row_num)
+            if isinstance(qty_result, RowError):
+                errors.append(qty_result)
+                continue
+
+            # Parse optional fields
+            customer = (
+                str(row[customer_key]).strip()
+                if customer_key and not pd.isna(row.get(customer_key))
+                else None
+            )
+            description = (
+                str(row[desc_key]).strip()
+                if desc_key and not pd.isna(row.get(desc_key))
+                else None
+            )
+            total_amount = (
+                _parse_float(row[total_key])
+                if total_key and not pd.isna(row.get(total_key))
+                else None
+            )
+
+            rows.append(
+                ParsedRow(
+                    date=date_result,
+                    sku=sku_value,
+                    quantity=qty_result,
+                    customer=customer,
+                    description=description,
+                    extended_amount=total_amount,
+                )
+            )
+
+    except Exception as e:
+        errors.append(
+            RowError(
+                row_number=0,
+                field=None,
+                message=f"Error parsing Excel file: {e}",
+            )
+        )
+
+    return ParseResult(rows=rows, errors=errors, total_rows=total_rows)
+
+
+def parse_winebow_report(content: bytes, extension: str) -> ParseResult:
+    """Parse a Winebow report from either CSV or Excel format.
+
+    Args:
+        content: File content as bytes.
+        extension: File extension ('.csv', '.xlsx', or '.xls').
+
+    Returns:
+        ParseResult with parsed rows and any errors.
+    """
+    extension = extension.lower()
+    if extension == ".csv":
+        return parse_winebow_csv(content)
+    elif extension in (".xlsx", ".xls"):
+        return parse_winebow_excel(content)
     else:
         return ParseResult(
             rows=[],

@@ -16,6 +16,9 @@ from src.services.distributor import (
     parse_southern_glazers_csv,
     parse_southern_glazers_excel,
     parse_southern_glazers_report,
+    parse_winebow_csv,
+    parse_winebow_excel,
+    parse_winebow_report,
     _find_column,
     _parse_date,
     _parse_float,
@@ -988,6 +991,379 @@ class TestParseSouthernGlazersReport:
     def test_parse_unsupported_extension(self) -> None:
         """Test error for unsupported extension."""
         result = parse_southern_glazers_report(b"content", ".pdf")
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "Unsupported file extension" in result.errors[0].message
+
+
+class TestParseWinebowCsv:
+    """Tests for parse_winebow_csv function."""
+
+    def test_parse_valid_csv(self) -> None:
+        """Test parsing valid Winebow CSV file."""
+        csv_content = b"""transaction_date,customer_name,product_code,product_name,quantity,total
+2026-01-15,Fine Wines Inc,UFRed250,Une Femme Red 250ml,48,623.52
+2026-01-16,Wine Emporium,UFBub250,Une Femme Brut 250ml,24,311.76"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert isinstance(result, ParseResult)
+        assert result.total_rows == 2
+        assert result.success_count == 2
+        assert result.error_count == 0
+        assert len(result.rows) == 2
+
+        # Check first row
+        row1 = result.rows[0]
+        assert row1.date == date(2026, 1, 15)
+        assert row1.sku == "UFRed250"
+        assert row1.quantity == 48
+        assert row1.customer == "Fine Wines Inc"
+        assert row1.description == "Une Femme Red 250ml"
+        assert row1.extended_amount == 623.52
+
+    def test_parse_csv_with_us_date_format(self) -> None:
+        """Test parsing CSV with US date format."""
+        csv_content = b"""transaction_date,product_code,quantity
+01/15/2026,UFRed250,48"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 1
+        assert result.rows[0].date == date(2026, 1, 15)
+
+    def test_parse_csv_minimal_columns(self) -> None:
+        """Test parsing CSV with only required columns."""
+        csv_content = b"""transaction_date,product_code,quantity
+2026-01-15,UFRed250,48"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 1
+        row = result.rows[0]
+        assert row.date == date(2026, 1, 15)
+        assert row.sku == "UFRed250"
+        assert row.quantity == 48
+        assert row.customer is None
+        assert row.description is None
+        assert row.extended_amount is None
+
+    def test_parse_csv_alternative_column_names(self) -> None:
+        """Test parsing CSV with alternative column names."""
+        csv_content = b"""date,sku,qty
+2026-01-15,UFRed250,48"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 1
+        assert result.rows[0].sku == "UFRed250"
+        assert result.rows[0].quantity == 48
+
+    def test_parse_csv_missing_required_column(self) -> None:
+        """Test error when required column is missing."""
+        csv_content = b"""transaction_date,product_code
+2026-01-15,UFRed250"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "Missing required columns" in result.errors[0].message
+        assert "quantity" in result.errors[0].message
+
+    def test_parse_csv_empty_file(self) -> None:
+        """Test error on empty file."""
+        csv_content = b""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "No data rows" in result.errors[0].message
+
+    def test_parse_csv_header_only(self) -> None:
+        """Test file with header but no data rows."""
+        csv_content = b"""transaction_date,product_code,quantity"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.total_rows == 0
+        assert result.success_count == 0
+        assert result.error_count == 0
+
+    def test_parse_csv_invalid_date_row(self) -> None:
+        """Test handling of row with invalid date."""
+        csv_content = b"""transaction_date,product_code,quantity
+2026-01-15,UFRed250,48
+invalid-date,UFBub250,24
+2026-01-17,UFRos250,36"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.total_rows == 3
+        assert result.success_count == 2
+        assert result.error_count == 1
+        assert result.errors[0].row_number == 3
+        assert result.errors[0].field == "date"
+
+    def test_parse_csv_missing_product_code(self) -> None:
+        """Test handling of row with missing product_code."""
+        csv_content = b"""transaction_date,product_code,quantity
+2026-01-15,,48"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "product_code is required" in result.errors[0].message
+
+    def test_parse_csv_missing_quantity(self) -> None:
+        """Test handling of row with missing quantity."""
+        csv_content = b"""transaction_date,product_code,quantity
+2026-01-15,UFRed250,"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "Quantity is required" in result.errors[0].message
+
+    def test_parse_csv_invalid_quantity(self) -> None:
+        """Test handling of row with invalid quantity."""
+        csv_content = b"""transaction_date,product_code,quantity
+2026-01-15,UFRed250,abc"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert "Invalid quantity" in result.errors[0].message
+
+    def test_parse_csv_skip_empty_rows(self) -> None:
+        """Test that empty rows are skipped."""
+        csv_content = b"""transaction_date,product_code,quantity
+2026-01-15,UFRed250,48
+
+2026-01-16,UFBub250,24"""
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 2
+
+    def test_parse_csv_100_rows(self) -> None:
+        """Test parsing 100 rows (acceptance criteria)."""
+        header = b"transaction_date,customer_name,product_code,quantity\n"
+        rows = [
+            f"2026-01-{(i % 28) + 1:02d},Customer{i},UFRed250,{i}\n".encode()
+            for i in range(1, 101)
+        ]
+        csv_content = header + b"".join(rows)
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.total_rows == 100
+        assert result.success_count == 100
+        assert result.error_count == 0
+
+    def test_parse_csv_latin1_encoding(self) -> None:
+        """Test parsing CSV with Latin-1 encoding."""
+        csv_content = "transaction_date,product_code,quantity\n2026-01-15,UFRed250,48\n".encode("latin-1")
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 1
+
+    def test_parse_csv_quantity_with_comma(self) -> None:
+        """Test parsing quantity with thousands separator."""
+        csv_content = b"""transaction_date,product_code,quantity
+2026-01-15,UFRed250,"1,234" """
+
+        result = parse_winebow_csv(csv_content)
+
+        assert result.success_count == 1
+        assert result.rows[0].quantity == 1234
+
+
+class TestParseWinebowExcel:
+    """Tests for parse_winebow_excel function."""
+
+    def _create_excel(self, data: dict) -> bytes:
+        """Create an Excel file from dictionary data."""
+        df = pd.DataFrame(data)
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False)
+        return buffer.getvalue()
+
+    def test_parse_valid_excel(self) -> None:
+        """Test parsing valid Winebow Excel file."""
+        excel_content = self._create_excel(
+            {
+                "transaction_date": [date(2026, 1, 15), date(2026, 1, 16)],
+                "customer_name": ["Fine Wines Inc", "Wine Emporium"],
+                "product_code": ["UFRed250", "UFBub250"],
+                "product_name": ["Une Femme Red 250ml", "Une Femme Brut 250ml"],
+                "quantity": [48, 24],
+                "total": [623.52, 311.76],
+            }
+        )
+
+        result = parse_winebow_excel(excel_content)
+
+        assert result.total_rows == 2
+        assert result.success_count == 2
+        assert result.error_count == 0
+
+        row1 = result.rows[0]
+        assert row1.date == date(2026, 1, 15)
+        assert row1.sku == "UFRed250"
+        assert row1.quantity == 48
+        assert row1.customer == "Fine Wines Inc"
+        assert row1.description == "Une Femme Red 250ml"
+        assert row1.extended_amount == 623.52
+
+    def test_parse_excel_minimal_columns(self) -> None:
+        """Test parsing Excel with only required columns."""
+        excel_content = self._create_excel(
+            {
+                "transaction_date": [date(2026, 1, 15)],
+                "product_code": ["UFRed250"],
+                "quantity": [48],
+            }
+        )
+
+        result = parse_winebow_excel(excel_content)
+
+        assert result.success_count == 1
+        row = result.rows[0]
+        assert row.customer is None
+        assert row.description is None
+        assert row.extended_amount is None
+
+    def test_parse_excel_empty_file(self) -> None:
+        """Test error on empty Excel file."""
+        excel_content = self._create_excel({})
+
+        result = parse_winebow_excel(excel_content)
+
+        assert result.success_count == 0
+        assert result.error_count == 1
+        assert (
+            "No data rows" in result.errors[0].message
+            or "Missing required" in result.errors[0].message
+        )
+
+    def test_parse_excel_missing_required_column(self) -> None:
+        """Test error when required column is missing."""
+        excel_content = self._create_excel(
+            {
+                "transaction_date": [date(2026, 1, 15)],
+                "product_code": ["UFRed250"],
+                # Missing quantity
+            }
+        )
+
+        result = parse_winebow_excel(excel_content)
+
+        assert result.error_count >= 1
+        assert any(
+            "Missing required" in e.message or "quantity" in e.message
+            for e in result.errors
+        )
+
+    def test_parse_excel_invalid_date_row(self) -> None:
+        """Test handling of row with invalid date in Excel."""
+        excel_content = self._create_excel(
+            {
+                "transaction_date": [date(2026, 1, 15), None, date(2026, 1, 17)],
+                "product_code": ["UFRed250", "UFBub250", "UFRos250"],
+                "quantity": [48, 24, 36],
+            }
+        )
+
+        result = parse_winebow_excel(excel_content)
+
+        assert result.total_rows == 3
+        assert result.success_count == 2
+        assert result.error_count == 1
+
+    def test_parse_excel_100_rows(self) -> None:
+        """Test parsing 100 rows in Excel (acceptance criteria)."""
+        excel_content = self._create_excel(
+            {
+                "transaction_date": [date(2026, 1, (i % 28) + 1) for i in range(100)],
+                "customer_name": [f"Customer{i}" for i in range(100)],
+                "product_code": ["UFRed250"] * 100,
+                "quantity": list(range(1, 101)),
+            }
+        )
+
+        result = parse_winebow_excel(excel_content)
+
+        assert result.total_rows == 100
+        assert result.success_count == 100
+        assert result.error_count == 0
+
+
+class TestParseWinebowReport:
+    """Tests for parse_winebow_report function (unified interface)."""
+
+    def test_parse_csv_extension(self) -> None:
+        """Test that .csv extension routes to CSV parser."""
+        csv_content = b"""transaction_date,product_code,quantity
+2026-01-15,UFRed250,48"""
+
+        result = parse_winebow_report(csv_content, ".csv")
+
+        assert result.success_count == 1
+
+    def test_parse_xlsx_extension(self) -> None:
+        """Test that .xlsx extension routes to Excel parser."""
+        df = pd.DataFrame(
+            {
+                "transaction_date": [date(2026, 1, 15)],
+                "product_code": ["UFRed250"],
+                "quantity": [48],
+            }
+        )
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False)
+        excel_content = buffer.getvalue()
+
+        result = parse_winebow_report(excel_content, ".xlsx")
+
+        assert result.success_count == 1
+
+    def test_parse_xls_extension(self) -> None:
+        """Test that .xls extension routes to Excel parser."""
+        df = pd.DataFrame(
+            {
+                "transaction_date": [date(2026, 1, 15)],
+                "product_code": ["UFRed250"],
+                "quantity": [48],
+            }
+        )
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False, engine="openpyxl")
+        excel_content = buffer.getvalue()
+
+        result = parse_winebow_report(excel_content, ".xls")
+
+        # May succeed or fail depending on xlrd availability
+        assert isinstance(result, ParseResult)
+
+    def test_parse_uppercase_extension(self) -> None:
+        """Test that uppercase extension is handled."""
+        csv_content = b"""transaction_date,product_code,quantity
+2026-01-15,UFRed250,48"""
+
+        result = parse_winebow_report(csv_content, ".CSV")
+
+        assert result.success_count == 1
+
+    def test_parse_unsupported_extension(self) -> None:
+        """Test error for unsupported extension."""
+        result = parse_winebow_report(b"content", ".pdf")
 
         assert result.success_count == 0
         assert result.error_count == 1

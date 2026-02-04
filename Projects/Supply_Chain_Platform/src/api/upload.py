@@ -7,7 +7,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
-from src.services.distributor import parse_rndc_report, parse_southern_glazers_report
+from src.services.distributor import (
+    parse_rndc_report,
+    parse_southern_glazers_report,
+    parse_winebow_report,
+)
 
 # Maximum file size: 10MB
 MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -239,9 +243,30 @@ async def upload_distributor_file(
             if parse_result.success_count > 0
             else "File parsing completed with errors."
         )
+    elif distributor_upper == "WINEBOW":
+        parse_result = parse_winebow_report(contents, extension)
+        result = ProcessingResult(
+            filename=filename,
+            distributor="Winebow",
+            total_rows=parse_result.total_rows,
+            success_count=parse_result.success_count,
+            error_count=parse_result.error_count,
+            errors=[
+                ValidationError(
+                    row=err.row_number,
+                    field=err.field,
+                    message=err.message,
+                )
+                for err in parse_result.errors
+            ],
+        )
+        message = (
+            f"File parsed successfully. {parse_result.success_count} rows processed."
+            if parse_result.success_count > 0
+            else "File parsing completed with errors."
+        )
     else:
         # For other distributors, return placeholder
-        # Parser for Winebow will be implemented in task 1.4.4
         result = ProcessingResult(
             filename=filename,
             distributor=distributor,
