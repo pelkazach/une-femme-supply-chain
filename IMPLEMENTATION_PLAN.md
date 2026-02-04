@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 27
+- Completed: 30
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -189,17 +189,23 @@
 ## Phase 2: Automation (P1)
 
 ### Priority 2.1: Demand Forecasting
-- [ ] **Task 2.1.1**: Create Prophet model training function
+- [x] **Task 2.1.1**: Create Prophet model training function
   - Spec: specs/05-demand-forecasting.md
   - Acceptance: Model trains on 2+ years data with multiplicative seasonality
+  - Completed: 2026-02-03
+  - Notes: Created src/services/forecast.py with train_forecast_model() function. Features: multiplicative seasonality (critical for champagne), linear growth, weekly/yearly seasonality, holiday calendar with NYE (7-day lead-up for 7.5x spike), Valentine's, Mother's Day, Thanksgiving. Minimum 2 years (104 weeks/728 days) training data required. Includes validate_model() for cross-validation, get_training_data() for DB retrieval, calculate_safety_stock() helper. 44 tests covering training, holidays, forecasting, and integration.
 
-- [ ] **Task 2.1.2**: Define holiday calendar (NYE, Valentine's, etc.)
+- [x] **Task 2.1.2**: Define holiday calendar (NYE, Valentine's, etc.)
   - Spec: specs/05-demand-forecasting.md
   - Acceptance: Holiday effects included with 7-day lower window
+  - Completed: 2026-02-03
+  - Notes: Created create_wine_holidays() function returning DataFrame with wine industry holidays for years 2020-2030. NYE has 7-day lower_window and 1-day upper_window for champagne spike. Valentine's Day has 7-day lower_window. Mother's Day (second Sunday of May) and Thanksgiving (fourth Thursday of November) also included. Holidays are automatically applied to Prophet model via train_forecast_model().
 
-- [ ] **Task 2.1.3**: Implement 26-week forecast generation
+- [x] **Task 2.1.3**: Implement 26-week forecast generation
   - Spec: specs/05-demand-forecasting.md
   - Acceptance: Returns weekly predictions with 80%/95% intervals
+  - Completed: 2026-02-03
+  - Notes: Created generate_forecast() function that produces weekly forecasts with configurable interval_width (default 80%, supports 95%). Returns DataFrame with ds, yhat, yhat_lower, yhat_upper columns. ForecastPoint and ForecastResult dataclasses provide structured results. train_forecast_model_for_sku() combines data retrieval, training, and forecast generation in one async function.
 
 - [ ] **Task 2.1.4**: Create weekly retraining Celery job
   - Spec: specs/05-demand-forecasting.md
