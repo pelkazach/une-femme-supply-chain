@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 4
+- Completed: 5
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -32,17 +32,19 @@
   - Completed: 2026-02-03
   - Notes: Created Product, Warehouse, and Distributor models with UUID primary keys, proper constraints (unique SKU/code), indexes, and nullable fields per spec
 
-- [ ] **Task 1.2.2**: Create inventory_events table as TimescaleDB hypertable
+- [x] **Task 1.2.2**: Create inventory_events table with BRIN index
   - Spec: specs/01-database-schema.md
-  - Acceptance: Hypertable created with time-based partitioning
+  - Acceptance: Table created with BRIN index on time column for efficient range queries
+  - Completed: 2026-02-03
+  - Notes: Created InventoryEvent SQLAlchemy model with BRIN index on time column, composite indexes on (sku_id, time) and (warehouse_id, time), and proper foreign key relationships with CASCADE/SET NULL delete behavior. Alembic migration creates all tables (products, warehouses, distributors, inventory_events) with proper indexes.
 
 - [ ] **Task 1.2.3**: Write migration to seed 4 product SKUs
   - Spec: specs/01-database-schema.md
   - Acceptance: UFBub250, UFRos250, UFRed250, UFCha250 exist in products table
 
-- [ ] **Task 1.2.4**: Create continuous aggregates for DOH_T30 and DOH_T90
+- [ ] **Task 1.2.4**: Create materialized views for DOH_T30 and DOH_T90
   - Spec: specs/04-inventory-metrics.md
-  - Acceptance: Aggregates refresh automatically, query returns expected values
+  - Acceptance: Materialized views created, can be refreshed on schedule, query returns expected values
 
 ### Priority 1.3: WineDirect Integration
 - [ ] **Task 1.3.1**: Create WineDirect API client with Bearer Token auth

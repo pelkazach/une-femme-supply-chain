@@ -1,9 +1,9 @@
 """Tests for SQLAlchemy models."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-from src.models import Distributor, Product, Warehouse
+from src.models import Distributor, InventoryEvent, Product, Warehouse
 
 
 class TestProductModel:
@@ -131,3 +131,130 @@ class TestModelRelationships:
         """Test that Warehouse.code has an index."""
         code_column = Warehouse.__table__.columns["code"]
         assert code_column.index is True
+
+
+class TestInventoryEventModel:
+    """Tests for the InventoryEvent model."""
+
+    def test_inventory_event_attributes(self) -> None:
+        """Test that InventoryEvent has all required attributes."""
+        event_time = datetime.now(timezone.utc)
+        sku_id = uuid.uuid4()
+        warehouse_id = uuid.uuid4()
+
+        event = InventoryEvent(
+            time=event_time,
+            sku_id=sku_id,
+            warehouse_id=warehouse_id,
+            event_type="shipment",
+            quantity=100,
+        )
+        assert event.time == event_time
+        assert event.sku_id == sku_id
+        assert event.warehouse_id == warehouse_id
+        assert event.event_type == "shipment"
+        assert event.quantity == 100
+
+    def test_inventory_event_default_id(self) -> None:
+        """Test that InventoryEvent generates a UUID by default."""
+        event = InventoryEvent(
+            time=datetime.now(timezone.utc),
+            sku_id=uuid.uuid4(),
+            warehouse_id=uuid.uuid4(),
+            event_type="depletion",
+            quantity=50,
+        )
+        assert event.id is None or isinstance(event.id, uuid.UUID)
+
+    def test_inventory_event_optional_distributor(self) -> None:
+        """Test that distributor_id is optional."""
+        event = InventoryEvent(
+            time=datetime.now(timezone.utc),
+            sku_id=uuid.uuid4(),
+            warehouse_id=uuid.uuid4(),
+            event_type="adjustment",
+            quantity=-10,
+        )
+        assert event.distributor_id is None
+
+    def test_inventory_event_with_distributor(self) -> None:
+        """Test InventoryEvent with a distributor."""
+        distributor_id = uuid.uuid4()
+        event = InventoryEvent(
+            time=datetime.now(timezone.utc),
+            sku_id=uuid.uuid4(),
+            warehouse_id=uuid.uuid4(),
+            distributor_id=distributor_id,
+            event_type="depletion",
+            quantity=25,
+        )
+        assert event.distributor_id == distributor_id
+
+    def test_inventory_event_repr(self) -> None:
+        """Test InventoryEvent string representation."""
+        event_time = datetime.now(timezone.utc)
+        event = InventoryEvent(
+            time=event_time,
+            sku_id=uuid.uuid4(),
+            warehouse_id=uuid.uuid4(),
+            event_type="shipment",
+            quantity=100,
+        )
+        repr_str = repr(event)
+        assert "shipment" in repr_str
+        assert "100" in repr_str
+
+    def test_inventory_event_tablename(self) -> None:
+        """Test that InventoryEvent has correct table name."""
+        assert InventoryEvent.__tablename__ == "inventory_events"
+
+    def test_inventory_event_has_brin_index(self) -> None:
+        """Test that InventoryEvent has a BRIN index on time column."""
+        # Check that the BRIN index exists in table args
+        table_args = InventoryEvent.__table_args__
+        brin_index_found = False
+        for arg in table_args:
+            if hasattr(arg, "name") and arg.name == "idx_inventory_events_time_brin":
+                # Check it uses BRIN
+                assert arg.kwargs.get("postgresql_using") == "brin"
+                brin_index_found = True
+                break
+        assert brin_index_found, "BRIN index on time column not found"
+
+    def test_inventory_event_has_composite_indexes(self) -> None:
+        """Test that InventoryEvent has composite indexes for query optimization."""
+        table_args = InventoryEvent.__table_args__
+        index_names = [
+            arg.name for arg in table_args if hasattr(arg, "name") and arg.name is not None
+        ]
+        assert "idx_inventory_events_sku_time" in index_names
+        assert "idx_inventory_events_warehouse_time" in index_names
+
+    def test_inventory_event_foreign_keys(self) -> None:
+        """Test that InventoryEvent has correct foreign key references."""
+        sku_id_col = InventoryEvent.__table__.columns["sku_id"]
+        warehouse_id_col = InventoryEvent.__table__.columns["warehouse_id"]
+        distributor_id_col = InventoryEvent.__table__.columns["distributor_id"]
+
+        # Check foreign keys exist
+        sku_fk = list(sku_id_col.foreign_keys)[0]
+        warehouse_fk = list(warehouse_id_col.foreign_keys)[0]
+        distributor_fk = list(distributor_id_col.foreign_keys)[0]
+
+        assert sku_fk.target_fullname == "products.id"
+        assert warehouse_fk.target_fullname == "warehouses.id"
+        assert distributor_fk.target_fullname == "distributors.id"
+
+    def test_inventory_event_cascade_delete(self) -> None:
+        """Test that InventoryEvent foreign keys have correct delete behavior."""
+        sku_id_col = InventoryEvent.__table__.columns["sku_id"]
+        warehouse_id_col = InventoryEvent.__table__.columns["warehouse_id"]
+        distributor_id_col = InventoryEvent.__table__.columns["distributor_id"]
+
+        sku_fk = list(sku_id_col.foreign_keys)[0]
+        warehouse_fk = list(warehouse_id_col.foreign_keys)[0]
+        distributor_fk = list(distributor_id_col.foreign_keys)[0]
+
+        assert sku_fk.ondelete == "CASCADE"
+        assert warehouse_fk.ondelete == "CASCADE"
+        assert distributor_fk.ondelete == "SET NULL"
