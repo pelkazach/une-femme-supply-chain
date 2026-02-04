@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 50
-- Completed: 48
+- Completed: 49
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -309,9 +309,11 @@
   - Completed: 2026-02-04
   - Notes: Created src/services/quickbooks.py with QuickBooksClient class implementing OAuth 2.0 authentication. Features include: AuthClient integration with python-quickbooks and intuit-oauth libraries, get_authorization_url() for OAuth flow initiation with CSRF state token, exchange_code() for authorization code exchange, automatic token refresh before expiry (60s buffer for access, 5min for refresh), TokenData dataclass for token persistence (JSON file storage), rate limiting (500 req/min with automatic cleanup of old timestamps), exponential backoff retry for 429/5xx errors, 401 auto-refresh handling, sync_inventory() for batch inventory updates, get_invoices() with date filtering. Added quickbooks settings to config.py. 58 tests covering OAuth flow, token management, API calls, error handling, and acceptance criteria.
 
-- [ ] **Task 3.2.2**: Create inventory sync function
+- [x] **Task 3.2.2**: Create inventory sync function
   - Spec: specs/10-quickbooks-integration.md
   - Acceptance: Inventory levels match between systems (±1%)
+  - Completed: 2026-02-04
+  - Notes: Created src/tasks/quickbooks_sync.py with bidirectional inventory sync. Features include: InventoryDiscrepancy dataclass with ±1% threshold detection, InventorySyncResult for comprehensive result tracking, get_quickbooks_inventory() and get_platform_inventory() for fetching inventory from both systems, detect_discrepancies() for comparing quantities, push_inventory_to_quickbooks() and pull_inventory_from_quickbooks() for bidirectional sync, sync_quickbooks_inventory Celery task running every 4 hours, check_inventory_discrepancies task for read-only checks. Added task to celery_app.py with beat schedule. 38 tests covering discrepancy detection, sync operations, and acceptance criteria.
 
 - [ ] **Task 3.2.3**: Implement invoice pull from QuickBooks
   - Spec: specs/10-quickbooks-integration.md

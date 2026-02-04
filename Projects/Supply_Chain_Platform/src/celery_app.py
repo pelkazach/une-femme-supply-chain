@@ -14,6 +14,7 @@ celery_app = Celery(
         "src.tasks.winedirect_sync",
         "src.tasks.forecast_retrain",
         "src.tasks.email_processor",
+        "src.tasks.quickbooks_sync",
     ],
 )
 
@@ -53,6 +54,14 @@ celery_app.conf.update(
             # Processing latency <15 seconds per email
             "schedule": crontab(minute="*/5"),
             "kwargs": {"max_emails": 50},
+            "options": {"queue": "default"},
+        },
+        "sync-quickbooks-inventory": {
+            "task": "src.tasks.quickbooks_sync.sync_quickbooks_inventory",
+            # Run every 4 hours for bidirectional inventory sync
+            # Per spec: sync completes within 15 minutes
+            "schedule": crontab(minute=0, hour="*/4"),
+            "kwargs": {"direction": "bidirectional"},
             "options": {"queue": "default"},
         },
     },
