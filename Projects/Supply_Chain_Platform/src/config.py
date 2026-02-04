@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     ollama_model: str = "mixtral"
     ollama_timeout: int = 60  # seconds
 
+    # QuickBooks Online API
+    quickbooks_client_id: str = ""
+    quickbooks_client_secret: str = ""
+    quickbooks_redirect_uri: str = "http://localhost:8000/callback/quickbooks"
+    quickbooks_environment: str = "sandbox"  # "sandbox" or "production"
+    quickbooks_token_file: str = "quickbooks_token.json"
+
     # Application
     debug: bool = False
     api_host: str = "0.0.0.0"

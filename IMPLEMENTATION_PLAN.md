@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 50
-- Completed: 47
+- Completed: 48
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -303,9 +303,11 @@
   - Notes: Created AgentAuditLog SQLAlchemy model for normalized audit storage with full searchability (by workflow, agent, action, SKU, confidence, time range). Created Alembic migration (d4e5f6g7h8i9) for agent_audit_logs table with composite indexes for common queries and partial index for low-confidence decisions (<0.85). Created src/services/audit_logging.py with functions: log_agent_decision(), log_audit_entries_from_state(), get_audit_logs(), get_workflow_audit_trail(), get_low_confidence_decisions(), get_audit_stats(), count_audit_logs(), delete_old_audit_logs(), get_agent_decision_summary(). Created src/api/audit.py with REST endpoints: GET /audit/logs (paginated list with filters), GET /audit/logs/{id}, GET /audit/workflow/{id} (full trail), GET /audit/stats, GET /audit/low-confidence, GET /audit/agents/{agent}/summary, GET /audit/agents, GET /audit/actions. 46 tests covering model, service, and API functionality.
 
 ### Priority 3.2: QuickBooks Integration
-- [ ] **Task 3.2.1**: Implement QuickBooks OAuth 2.0 flow
+- [x] **Task 3.2.1**: Implement QuickBooks OAuth 2.0 flow
   - Spec: specs/10-quickbooks-integration.md
   - Acceptance: OAuth completes, tokens stored
+  - Completed: 2026-02-04
+  - Notes: Created src/services/quickbooks.py with QuickBooksClient class implementing OAuth 2.0 authentication. Features include: AuthClient integration with python-quickbooks and intuit-oauth libraries, get_authorization_url() for OAuth flow initiation with CSRF state token, exchange_code() for authorization code exchange, automatic token refresh before expiry (60s buffer for access, 5min for refresh), TokenData dataclass for token persistence (JSON file storage), rate limiting (500 req/min with automatic cleanup of old timestamps), exponential backoff retry for 429/5xx errors, 401 auto-refresh handling, sync_inventory() for batch inventory updates, get_invoices() with date filtering. Added quickbooks settings to config.py. 58 tests covering OAuth flow, token management, API calls, error handling, and acceptance criteria.
 
 - [ ] **Task 3.2.2**: Create inventory sync function
   - Spec: specs/10-quickbooks-integration.md
