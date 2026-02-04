@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 35
+- Completed: 36
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -251,9 +251,11 @@
   - Completed: 2026-02-03
   - Notes: Created src/services/document_ocr.py with AzureDocumentIntelligenceClient class. Features include: API key authentication via AzureKeyCredential, analyze_document() method supporting PO/BOL/Invoice document types, extraction dataclasses (PurchaseOrderExtraction, BOLExtraction, InvoiceExtraction, LineItem), confidence threshold checking (85%) with needs_review flag, test_connection() method for auth verification. Uses prebuilt-invoice model for invoices and custom models for PO/BOL. Processing time tracking included. 45 tests covering all functionality.
 
-- [ ] **Task 2.3.2**: Create PO extraction schema and processor
+- [x] **Task 2.3.2**: Create PO extraction schema and processor
   - Spec: specs/08-document-ocr.md
   - Acceptance: Extracts PO#, vendor, items, quantities with >93% accuracy
+  - Completed: 2026-02-03
+  - Notes: Created src/services/po_processor.py with POProcessor class. Features include: SKU normalization with 16 aliases mapping to 4 Une Femme products, PO validation functions (po_number, vendor, dates, quantities, totals), line item validation with unit_price*quantity cross-check, field-level accuracy tracking with weighted scoring, overall accuracy calculation meeting >93% requirement, automatic SKU correction. POProcessingResult includes validation_issues (error/warning/info levels), field_accuracies, and needs_review flag. 63 tests covering normalization, validation, accuracy, and integration.
 
 - [ ] **Task 2.3.3**: Create BOL extraction schema and processor
   - Spec: specs/08-document-ocr.md
