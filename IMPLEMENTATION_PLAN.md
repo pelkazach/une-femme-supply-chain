@@ -162,9 +162,11 @@
   - Completed: 2026-02-03
   - Notes: Created SQL queries for DOH overview dashboard in sql/redash/: doh_overview.sql (uses mv_doh_metrics materialized view), doh_by_sku.sql (aggregated by SKU), and doh_overview_direct.sql (real-time query from inventory_events). Created scripts/setup_redash_dashboard.py to automate query creation via Redash API. Queries show SKU, warehouse, on_hand, depletions_30d/90d, doh_t30, doh_t90, and status (CRITICAL/WARNING/NO SALES/OK). Results ordered by severity. 38 tests covering SQL syntax, file existence, and script functionality.
 
-- [ ] **Task 1.6.4**: Create shipment:depletion ratio visualization
+- [x] **Task 1.6.4**: Create shipment:depletion ratio visualization
   - Spec: specs/06-dashboard-alerting.md
   - Acceptance: Chart shows ratios with color coding
+  - Completed: 2026-02-03
+  - Notes: Created SQL queries for ship:dep ratio dashboards: ship_dep_ratio.sql (uses mv_doh_metrics), ship_dep_ratio_by_sku.sql (aggregated by SKU), and ship_dep_ratio_direct.sql (real-time from inventory_events). Added SHIP_DEP_RATIO_QUERY and SHIP_DEP_RATIO_BY_SKU_QUERY to setup script. Created setup_ratio_visualizations() function with bar chart configuration and color coding (Red=UNDERSUPPLY <0.5, Yellow=OVERSUPPLY >2.0, Green=BALANCED). Added create_visualization() and get_query() methods to RedashClient. 42 new tests covering SQL queries and script functionality.
 
 - [ ] **Task 1.6.5**: Configure stock-out risk alert (DOH_T30 < 14)
   - Spec: specs/06-dashboard-alerting.md

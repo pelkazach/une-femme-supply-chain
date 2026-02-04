@@ -92,6 +92,92 @@ ORDER BY
     doh_t30 ASC NULLS LAST;
 """
 
+# SQL query for Shipment:Depletion Ratio
+SHIP_DEP_RATIO_QUERY = """
+-- Shipment:Depletion Ratio: Supply/demand balance metrics for all SKUs
+-- Ratio > 1 means more shipments than depletions (building inventory)
+-- Ratio < 1 means more depletions than shipments (drawing down inventory)
+SELECT
+    p.sku,
+    p.name as product_name,
+    w.name as warehouse,
+    m.shipments_30d,
+    m.depletions_30d,
+    m.shipments_90d,
+    m.depletions_90d,
+    m.a30_ship_dep_ratio,
+    m.a90_ship_dep_ratio,
+    CASE
+        WHEN m.a30_ship_dep_ratio IS NULL THEN 'NO SALES'
+        WHEN m.a30_ship_dep_ratio > 2.0 THEN 'OVERSUPPLY'
+        WHEN m.a30_ship_dep_ratio < 0.5 THEN 'UNDERSUPPLY'
+        ELSE 'BALANCED'
+    END as status_30d,
+    CASE
+        WHEN m.a90_ship_dep_ratio IS NULL THEN 'NO SALES'
+        WHEN m.a90_ship_dep_ratio > 2.0 THEN 'OVERSUPPLY'
+        WHEN m.a90_ship_dep_ratio < 0.5 THEN 'UNDERSUPPLY'
+        ELSE 'BALANCED'
+    END as status_90d,
+    m.calculated_at
+FROM mv_doh_metrics m
+JOIN products p ON m.sku_id = p.id
+JOIN warehouses w ON m.warehouse_id = w.id
+ORDER BY
+    CASE
+        WHEN m.a30_ship_dep_ratio IS NULL THEN 2
+        WHEN m.a30_ship_dep_ratio < 0.5 THEN 0
+        WHEN m.a30_ship_dep_ratio > 2.0 THEN 1
+        ELSE 3
+    END,
+    m.a30_ship_dep_ratio ASC NULLS LAST;
+"""
+
+# SQL query for Shipment:Depletion Ratio by SKU (aggregated)
+SHIP_DEP_RATIO_BY_SKU_QUERY = """
+-- Shipment:Depletion Ratio by SKU: Aggregated supply/demand balance
+SELECT
+    p.sku,
+    p.name as product_name,
+    SUM(m.shipments_30d) as total_shipments_30d,
+    SUM(m.depletions_30d) as total_depletions_30d,
+    SUM(m.shipments_90d) as total_shipments_90d,
+    SUM(m.depletions_90d) as total_depletions_90d,
+    CASE
+        WHEN SUM(m.depletions_30d) > 0
+        THEN ROUND(SUM(m.shipments_30d)::NUMERIC / SUM(m.depletions_30d)::NUMERIC, 2)
+        ELSE NULL
+    END as a30_ship_dep_ratio,
+    CASE
+        WHEN SUM(m.depletions_90d) > 0
+        THEN ROUND(SUM(m.shipments_90d)::NUMERIC / SUM(m.depletions_90d)::NUMERIC, 2)
+        ELSE NULL
+    END as a90_ship_dep_ratio,
+    CASE
+        WHEN SUM(m.depletions_30d) = 0 THEN 'NO SALES'
+        WHEN SUM(m.shipments_30d)::NUMERIC / SUM(m.depletions_30d)::NUMERIC > 2.0 THEN 'OVERSUPPLY'
+        WHEN SUM(m.shipments_30d)::NUMERIC / SUM(m.depletions_30d)::NUMERIC < 0.5 THEN 'UNDERSUPPLY'
+        ELSE 'BALANCED'
+    END as status_30d,
+    CASE
+        WHEN SUM(m.depletions_90d) = 0 THEN 'NO SALES'
+        WHEN SUM(m.shipments_90d)::NUMERIC / SUM(m.depletions_90d)::NUMERIC > 2.0 THEN 'OVERSUPPLY'
+        WHEN SUM(m.shipments_90d)::NUMERIC / SUM(m.depletions_90d)::NUMERIC < 0.5 THEN 'UNDERSUPPLY'
+        ELSE 'BALANCED'
+    END as status_90d
+FROM mv_doh_metrics m
+JOIN products p ON m.sku_id = p.id
+GROUP BY p.sku, p.name
+ORDER BY
+    CASE
+        WHEN SUM(m.depletions_30d) = 0 THEN 2
+        WHEN SUM(m.shipments_30d)::NUMERIC / SUM(m.depletions_30d)::NUMERIC < 0.5 THEN 0
+        WHEN SUM(m.shipments_30d)::NUMERIC / SUM(m.depletions_30d)::NUMERIC > 2.0 THEN 1
+        ELSE 3
+    END,
+    a30_ship_dep_ratio ASC NULLS LAST;
+"""
+
 
 class RedashClient:
     """Client for Redash API operations."""
@@ -285,6 +371,55 @@ class RedashClient:
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
 
+    def create_visualization(
+        self,
+        query_id: int,
+        name: str,
+        vis_type: str,
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create a visualization for a query.
+
+        Args:
+            query_id: ID of the query
+            name: Visualization name
+            vis_type: Type of visualization (CHART, TABLE, COUNTER, etc.)
+            options: Visualization options (chart type, columns, colors, etc.)
+
+        Returns:
+            Created visualization dictionary
+        """
+        response = httpx.post(
+            f"{self.base_url}/api/visualizations",
+            headers=self.headers,
+            json={
+                "query_id": query_id,
+                "name": name,
+                "type": vis_type,
+                "options": options,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def get_query(self, query_id: int) -> dict[str, Any]:
+        """Get a query by ID.
+
+        Args:
+            query_id: ID of the query
+
+        Returns:
+            Query dictionary including visualizations
+        """
+        response = httpx.get(
+            f"{self.base_url}/api/queries/{query_id}",
+            headers=self.headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
     def publish_dashboard(self, dashboard_id: int) -> dict[str, Any]:
         """Publish a dashboard to make it visible.
 
@@ -360,6 +495,17 @@ def setup_doh_queries(client: RedashClient, data_source_id: int) -> dict[str, in
             "query": DOH_BY_SKU_QUERY,
             "description": "Days on Hand metrics aggregated by SKU across all warehouses.",
         },
+        {
+            "name": "Shipment:Depletion Ratio",
+            "query": SHIP_DEP_RATIO_QUERY,
+            "description": "Supply/demand balance ratios (A30, A90) for all SKUs by warehouse. "
+            "Shows OVERSUPPLY (>2.0), UNDERSUPPLY (<0.5), or BALANCED status.",
+        },
+        {
+            "name": "Shipment:Depletion Ratio by SKU",
+            "query": SHIP_DEP_RATIO_BY_SKU_QUERY,
+            "description": "Supply/demand balance ratios aggregated by SKU across all warehouses.",
+        },
     ]
 
     # Get existing queries
@@ -394,6 +540,89 @@ def setup_doh_queries(client: RedashClient, data_source_id: int) -> dict[str, in
     return created_queries
 
 
+def setup_ratio_visualizations(
+    client: RedashClient, query_ids: dict[str, int]
+) -> dict[str, int]:
+    """Set up visualizations for shipment:depletion ratio queries.
+
+    Creates bar charts with color coding for ratio values:
+    - Red: UNDERSUPPLY (< 0.5)
+    - Yellow: OVERSUPPLY (> 2.0)
+    - Green: BALANCED (0.5 - 2.0)
+
+    Args:
+        client: Redash API client
+        query_ids: Dictionary mapping query names to IDs
+
+    Returns:
+        Dictionary mapping visualization names to visualization IDs
+    """
+    created_visualizations: dict[str, int] = {}
+
+    # Visualization for Shipment:Depletion Ratio by SKU (bar chart)
+    if "Shipment:Depletion Ratio by SKU" in query_ids:
+        query_id = query_ids["Shipment:Depletion Ratio by SKU"]
+
+        # Check if visualization already exists
+        query_data = client.get_query(query_id)
+        existing_vis = None
+        for vis in query_data.get("visualizations", []):
+            if vis.get("name") == "Ratio Chart":
+                existing_vis = vis
+                break
+
+        if existing_vis:
+            print(f"  Visualization 'Ratio Chart' already exists (ID: {existing_vis['id']})")
+            created_visualizations["Ratio Chart"] = existing_vis["id"]
+        else:
+            print("Creating visualization: Ratio Chart for Shipment:Depletion Ratio by SKU")
+
+            # Bar chart options for Redash
+            # Color coding based on status_30d column
+            chart_options = {
+                "globalSeriesType": "column",
+                "columnMapping": {
+                    "sku": "x",
+                    "a30_ship_dep_ratio": "y",
+                    "status_30d": "series",
+                },
+                "xAxis": {
+                    "type": "-",
+                    "labels": {"enabled": True},
+                },
+                "yAxis": [
+                    {
+                        "type": "linear",
+                        "title": {"text": "Shipment:Depletion Ratio (30d)"},
+                    }
+                ],
+                "seriesOptions": {
+                    "UNDERSUPPLY": {"color": "#E74C3C", "type": "column"},
+                    "BALANCED": {"color": "#2ECC71", "type": "column"},
+                    "OVERSUPPLY": {"color": "#F39C12", "type": "column"},
+                    "NO SALES": {"color": "#95A5A6", "type": "column"},
+                },
+                "legend": {"enabled": True, "placement": "auto"},
+                "showDataLabels": True,
+                "numberFormat": "0.00",
+                "percentFormat": "0%",
+            }
+
+            try:
+                vis = client.create_visualization(
+                    query_id=query_id,
+                    name="Ratio Chart",
+                    vis_type="CHART",
+                    options=chart_options,
+                )
+                created_visualizations["Ratio Chart"] = vis["id"]
+                print(f"  Created with ID: {vis['id']}")
+            except httpx.HTTPStatusError as e:
+                print(f"  Warning: Could not create visualization: {e}")
+
+    return created_visualizations
+
+
 def setup_doh_dashboard(
     client: RedashClient, query_ids: dict[str, int]
 ) -> dict[str, Any]:
@@ -406,7 +635,7 @@ def setup_doh_dashboard(
     Returns:
         Dashboard dictionary
     """
-    dashboard_name = "DOH Overview"
+    dashboard_name = "Supply Chain Overview"
 
     # Get existing dashboards
     existing_dashboards = client.get_dashboards()
@@ -473,6 +702,11 @@ def main() -> int:
         # Set up queries
         query_ids = setup_doh_queries(client, data_source["id"])
         print(f"\nCreated/updated {len(query_ids)} queries")
+
+        # Set up ratio visualizations with color coding
+        print("\nSetting up visualizations...")
+        vis_ids = setup_ratio_visualizations(client, query_ids)
+        print(f"Created/updated {len(vis_ids)} visualizations")
 
         # Set up dashboard
         dashboard = setup_doh_dashboard(client, query_ids)
