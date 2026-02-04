@@ -1,0 +1,499 @@
+"""Setup Redash dashboard queries and visualizations.
+
+This script creates the DOH overview dashboard queries in Redash
+using the Redash API. It is idempotent - running multiple times
+will update existing queries rather than creating duplicates.
+
+Usage:
+    poetry run python scripts/setup_redash_dashboard.py
+
+Environment variables:
+    REDASH_URL: Base URL of Redash instance
+    REDASH_API_KEY: API key for Redash admin user
+"""
+
+import os
+import sys
+from typing import Any, cast
+
+import httpx
+
+# Redash instance URL (from Task 1.6.1)
+DEFAULT_REDASH_URL = "https://redash-server-production-920f.up.railway.app"
+
+# SQL query for DOH Overview
+DOH_OVERVIEW_QUERY = """
+-- DOH Overview: Days on Hand metrics for all SKUs
+-- Shows current inventory, 30-day and 90-day DOH, plus status indicators
+SELECT
+    p.sku,
+    p.name as product_name,
+    w.name as warehouse,
+    m.current_inventory as on_hand,
+    m.depletions_30d,
+    m.depletions_90d,
+    m.doh_t30,
+    m.doh_t90,
+    CASE
+        WHEN m.doh_t30 IS NULL THEN 'NO SALES'
+        WHEN m.doh_t30 < 14 THEN 'CRITICAL'
+        WHEN m.doh_t30 < 30 THEN 'WARNING'
+        ELSE 'OK'
+    END as status,
+    m.calculated_at
+FROM mv_doh_metrics m
+JOIN products p ON m.sku_id = p.id
+JOIN warehouses w ON m.warehouse_id = w.id
+ORDER BY
+    CASE
+        WHEN m.doh_t30 IS NULL THEN 2
+        WHEN m.doh_t30 < 14 THEN 0
+        WHEN m.doh_t30 < 30 THEN 1
+        ELSE 3
+    END,
+    m.doh_t30 ASC NULLS LAST;
+"""
+
+# SQL query for DOH by SKU (aggregated across warehouses)
+DOH_BY_SKU_QUERY = """
+-- DOH by SKU: Aggregated DOH metrics across all warehouses
+SELECT
+    p.sku,
+    p.name as product_name,
+    SUM(m.current_inventory) as total_on_hand,
+    SUM(m.depletions_30d) as total_depletions_30d,
+    SUM(m.depletions_90d) as total_depletions_90d,
+    CASE
+        WHEN SUM(m.depletions_30d) > 0
+        THEN ROUND(SUM(m.current_inventory)::NUMERIC / (SUM(m.depletions_30d)::NUMERIC / 30), 1)
+        ELSE NULL
+    END as doh_t30,
+    CASE
+        WHEN SUM(m.depletions_90d) > 0
+        THEN ROUND(SUM(m.current_inventory)::NUMERIC / (SUM(m.depletions_90d)::NUMERIC / 90), 1)
+        ELSE NULL
+    END as doh_t90,
+    CASE
+        WHEN SUM(m.depletions_30d) = 0 THEN 'NO SALES'
+        WHEN SUM(m.current_inventory)::NUMERIC / (SUM(m.depletions_30d)::NUMERIC / 30) < 14 THEN 'CRITICAL'
+        WHEN SUM(m.current_inventory)::NUMERIC / (SUM(m.depletions_30d)::NUMERIC / 30) < 30 THEN 'WARNING'
+        ELSE 'OK'
+    END as status
+FROM mv_doh_metrics m
+JOIN products p ON m.sku_id = p.id
+GROUP BY p.sku, p.name
+ORDER BY
+    CASE
+        WHEN SUM(m.depletions_30d) = 0 THEN 2
+        WHEN SUM(m.current_inventory)::NUMERIC / (SUM(m.depletions_30d)::NUMERIC / 30) < 14 THEN 0
+        WHEN SUM(m.current_inventory)::NUMERIC / (SUM(m.depletions_30d)::NUMERIC / 30) < 30 THEN 1
+        ELSE 3
+    END,
+    doh_t30 ASC NULLS LAST;
+"""
+
+
+class RedashClient:
+    """Client for Redash API operations."""
+
+    def __init__(self, base_url: str, api_key: str):
+        """Initialize the Redash client.
+
+        Args:
+            base_url: Base URL of the Redash instance
+            api_key: API key for authentication
+        """
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.headers = {"Authorization": f"Key {api_key}"}
+
+    def get_data_sources(self) -> list[dict[str, Any]]:
+        """Get list of data sources.
+
+        Returns:
+            List of data source dictionaries
+        """
+        response = httpx.get(
+            f"{self.base_url}/api/data_sources",
+            headers=self.headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(list[dict[str, Any]], response.json())
+
+    def get_queries(self) -> list[dict[str, Any]]:
+        """Get list of queries.
+
+        Returns:
+            List of query dictionaries
+        """
+        response = httpx.get(
+            f"{self.base_url}/api/queries",
+            headers=self.headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return cast(list[dict[str, Any]], data.get("results", []))
+
+    def create_query(
+        self,
+        name: str,
+        query: str,
+        data_source_id: int,
+        description: str = "",
+    ) -> dict[str, Any]:
+        """Create a new query.
+
+        Args:
+            name: Query name
+            query: SQL query text
+            data_source_id: ID of the data source
+            description: Optional query description
+
+        Returns:
+            Created query dictionary
+        """
+        response = httpx.post(
+            f"{self.base_url}/api/queries",
+            headers=self.headers,
+            json={
+                "name": name,
+                "query": query,
+                "data_source_id": data_source_id,
+                "description": description,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def update_query(
+        self,
+        query_id: int,
+        name: str,
+        query: str,
+        description: str = "",
+    ) -> dict[str, Any]:
+        """Update an existing query.
+
+        Args:
+            query_id: ID of the query to update
+            name: Query name
+            query: SQL query text
+            description: Optional query description
+
+        Returns:
+            Updated query dictionary
+        """
+        response = httpx.post(
+            f"{self.base_url}/api/queries/{query_id}",
+            headers=self.headers,
+            json={
+                "name": name,
+                "query": query,
+                "description": description,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def execute_query(self, query_id: int) -> dict[str, Any]:
+        """Execute a query and wait for results.
+
+        Args:
+            query_id: ID of the query to execute
+
+        Returns:
+            Query result dictionary
+        """
+        # Trigger execution
+        response = httpx.post(
+            f"{self.base_url}/api/queries/{query_id}/results",
+            headers=self.headers,
+            json={"max_age": 0},  # Force fresh execution
+            timeout=60.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def get_dashboards(self) -> list[dict[str, Any]]:
+        """Get list of dashboards.
+
+        Returns:
+            List of dashboard dictionaries
+        """
+        response = httpx.get(
+            f"{self.base_url}/api/dashboards",
+            headers=self.headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return cast(list[dict[str, Any]], data.get("results", []))
+
+    def create_dashboard(self, name: str) -> dict[str, Any]:
+        """Create a new dashboard.
+
+        Args:
+            name: Dashboard name
+
+        Returns:
+            Created dashboard dictionary
+        """
+        response = httpx.post(
+            f"{self.base_url}/api/dashboards",
+            headers=self.headers,
+            json={"name": name},
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def add_widget_to_dashboard(
+        self,
+        dashboard_id: int,
+        visualization_id: int,
+        options: dict[str, Any] | None = None,
+        width: int = 3,
+        text: str = "",
+    ) -> dict[str, Any]:
+        """Add a widget to a dashboard.
+
+        Args:
+            dashboard_id: ID of the dashboard
+            visualization_id: ID of the visualization to add
+            options: Widget options
+            width: Widget width (1-6)
+            text: Text content (for text widgets)
+
+        Returns:
+            Created widget dictionary
+        """
+        response = httpx.post(
+            f"{self.base_url}/api/dashboards/{dashboard_id}/widgets",
+            headers=self.headers,
+            json={
+                "visualization_id": visualization_id,
+                "options": options or {},
+                "width": width,
+                "text": text,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def publish_dashboard(self, dashboard_id: int) -> dict[str, Any]:
+        """Publish a dashboard to make it visible.
+
+        Args:
+            dashboard_id: ID of the dashboard
+
+        Returns:
+            Updated dashboard dictionary
+        """
+        response = httpx.post(
+            f"{self.base_url}/api/dashboards/{dashboard_id}",
+            headers=self.headers,
+            json={"is_draft": False},
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+
+def find_query_by_name(queries: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+    """Find a query by name.
+
+    Args:
+        queries: List of query dictionaries
+        name: Query name to find
+
+    Returns:
+        Query dictionary if found, None otherwise
+    """
+    for query in queries:
+        if query.get("name") == name:
+            return query
+    return None
+
+
+def find_dashboard_by_name(
+    dashboards: list[dict[str, Any]], name: str
+) -> dict[str, Any] | None:
+    """Find a dashboard by name.
+
+    Args:
+        dashboards: List of dashboard dictionaries
+        name: Dashboard name to find
+
+    Returns:
+        Dashboard dictionary if found, None otherwise
+    """
+    for dashboard in dashboards:
+        if dashboard.get("name") == name:
+            return dashboard
+    return None
+
+
+def setup_doh_queries(client: RedashClient, data_source_id: int) -> dict[str, int]:
+    """Set up DOH overview queries in Redash.
+
+    Args:
+        client: Redash API client
+        data_source_id: ID of the data source to use
+
+    Returns:
+        Dictionary mapping query names to query IDs
+    """
+    queries_to_create = [
+        {
+            "name": "DOH Overview",
+            "query": DOH_OVERVIEW_QUERY,
+            "description": "Days on Hand overview for all SKUs by warehouse. "
+            "Shows DOH_T30, DOH_T90, and status indicators (CRITICAL/WARNING/OK).",
+        },
+        {
+            "name": "DOH by SKU",
+            "query": DOH_BY_SKU_QUERY,
+            "description": "Days on Hand metrics aggregated by SKU across all warehouses.",
+        },
+    ]
+
+    # Get existing queries
+    existing_queries = client.get_queries()
+    created_queries: dict[str, int] = {}
+
+    for query_def in queries_to_create:
+        existing = find_query_by_name(existing_queries, query_def["name"])
+
+        if existing:
+            # Update existing query
+            print(f"Updating existing query: {query_def['name']} (ID: {existing['id']})")
+            result = client.update_query(
+                query_id=existing["id"],
+                name=query_def["name"],
+                query=query_def["query"],
+                description=query_def["description"],
+            )
+            created_queries[query_def["name"]] = existing["id"]
+        else:
+            # Create new query
+            print(f"Creating query: {query_def['name']}")
+            result = client.create_query(
+                name=query_def["name"],
+                query=query_def["query"],
+                data_source_id=data_source_id,
+                description=query_def["description"],
+            )
+            created_queries[query_def["name"]] = result["id"]
+            print(f"  Created with ID: {result['id']}")
+
+    return created_queries
+
+
+def setup_doh_dashboard(
+    client: RedashClient, query_ids: dict[str, int]
+) -> dict[str, Any]:
+    """Set up DOH overview dashboard in Redash.
+
+    Args:
+        client: Redash API client
+        query_ids: Dictionary mapping query names to IDs
+
+    Returns:
+        Dashboard dictionary
+    """
+    dashboard_name = "DOH Overview"
+
+    # Get existing dashboards
+    existing_dashboards = client.get_dashboards()
+    existing = find_dashboard_by_name(existing_dashboards, dashboard_name)
+
+    if existing:
+        print(f"Dashboard already exists: {dashboard_name} (ID: {existing['id']})")
+        return existing
+
+    # Create new dashboard
+    print(f"Creating dashboard: {dashboard_name}")
+    dashboard = client.create_dashboard(dashboard_name)
+    dashboard_id = dashboard["id"]
+    print(f"  Created with ID: {dashboard_id}")
+
+    # Add widgets for each query
+    # Note: We need to get the visualization IDs from the queries
+    # Each query has a default "Table" visualization created automatically
+
+    # Publish dashboard
+    client.publish_dashboard(dashboard_id)
+    print("  Published dashboard")
+
+    return dashboard
+
+
+def main() -> int:
+    """Main entry point for setting up Redash dashboard.
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    # Get configuration from environment
+    redash_url = os.environ.get("REDASH_URL", DEFAULT_REDASH_URL)
+    api_key = os.environ.get("REDASH_API_KEY")
+
+    if not api_key:
+        print("Error: REDASH_API_KEY environment variable is required")
+        print("You can get an API key from Redash settings page")
+        return 1
+
+    print(f"Connecting to Redash at: {redash_url}")
+
+    try:
+        client = RedashClient(redash_url, api_key)
+
+        # Get data sources
+        data_sources = client.get_data_sources()
+        if not data_sources:
+            print("Error: No data sources configured in Redash")
+            return 1
+
+        # Find the Une Femme data source (or use the first one)
+        data_source = None
+        for ds in data_sources:
+            if "Une Femme" in ds.get("name", ""):
+                data_source = ds
+                break
+        if not data_source:
+            data_source = data_sources[0]
+
+        print(f"Using data source: {data_source['name']} (ID: {data_source['id']})")
+
+        # Set up queries
+        query_ids = setup_doh_queries(client, data_source["id"])
+        print(f"\nCreated/updated {len(query_ids)} queries")
+
+        # Set up dashboard
+        dashboard = setup_doh_dashboard(client, query_ids)
+        print(f"\nDashboard URL: {redash_url}/dashboards/{dashboard['id']}")
+
+        print("\nSetup complete!")
+        print("\nNext steps:")
+        print("1. Open the queries in Redash and verify they work")
+        print("2. Add visualizations (charts) to the queries")
+        print("3. Add the visualizations to the dashboard")
+        print("4. Set up auto-refresh schedule (5 minutes)")
+
+        return 0
+
+    except httpx.HTTPStatusError as e:
+        print(f"HTTP Error: {e.response.status_code} - {e.response.text}")
+        return 1
+    except httpx.RequestError as e:
+        print(f"Request Error: {e}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

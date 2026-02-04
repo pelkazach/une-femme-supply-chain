@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 23
+- Completed: 24
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -156,9 +156,11 @@
   - Completed: 2026-02-03
   - Notes: Created admin user (admin@unefemmewines.com) via Redash setup API. Configured PostgreSQL data source "Une Femme Supply Chain" pointing to Railway PostgreSQL (centerbeam.proxy.rlwy.net:22539). Also ran Alembic migrations on production database to create all tables (products, warehouses, distributors, inventory_events) and materialized views (mv_daily_metrics, mv_doh_metrics). Test query on products table returned all 4 SKUs successfully.
 
-- [ ] **Task 1.6.3**: Create DOH overview dashboard query
+- [x] **Task 1.6.3**: Create DOH overview dashboard query
   - Spec: specs/06-dashboard-alerting.md
   - Acceptance: Shows DOH_T30, DOH_T90 for all 4 SKUs
+  - Completed: 2026-02-03
+  - Notes: Created SQL queries for DOH overview dashboard in sql/redash/: doh_overview.sql (uses mv_doh_metrics materialized view), doh_by_sku.sql (aggregated by SKU), and doh_overview_direct.sql (real-time query from inventory_events). Created scripts/setup_redash_dashboard.py to automate query creation via Redash API. Queries show SKU, warehouse, on_hand, depletions_30d/90d, doh_t30, doh_t90, and status (CRITICAL/WARNING/NO SALES/OK). Results ordered by severity. 38 tests covering SQL syntax, file existence, and script functionality.
 
 - [ ] **Task 1.6.4**: Create shipment:depletion ratio visualization
   - Spec: specs/06-dashboard-alerting.md
