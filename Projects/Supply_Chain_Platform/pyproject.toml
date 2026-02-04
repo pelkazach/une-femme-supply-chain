@@ -3,7 +3,6 @@ name = "une-femme-supply-chain"
 version = "0.1.0"
 description = "Une Femme Wine Supply Chain Intelligence Platform"
 authors = ["Une Femme Team"]
-readme = "README.md"
 packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
