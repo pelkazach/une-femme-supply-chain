@@ -3,7 +3,8 @@
 This module provides functions for calculating key inventory metrics:
 - DOH_T30: Days on Hand based on trailing 30-day depletion rate
 - DOH_T90: Days on Hand based on trailing 90-day depletion rate
-- Shipment:Depletion ratios
+- A30_Ship:A30_Dep: Ratio of 30-day shipments to 30-day depletions
+- A90_Ship:A90_Dep: Ratio of 90-day shipments to 90-day depletions
 - Velocity trend ratios
 """
 
@@ -46,6 +47,37 @@ class DOHMetrics:
     doh_t90: MetricValue
     depletion_90d: int
     daily_rate_90d: MetricValue
+    calculated_at: datetime
+
+
+@dataclass(frozen=True)
+class ShipDepRatioMetrics:
+    """Shipment to Depletion ratio metrics for a SKU.
+
+    These ratios help identify inventory flow balance:
+    - Ratio > 1: More inventory coming in than going out (building stock)
+    - Ratio = 1: Balanced inventory flow
+    - Ratio < 1: More inventory going out than coming in (depleting stock)
+
+    Attributes:
+        sku: The SKU code
+        sku_id: The SKU UUID
+        shipment_30d: Total shipments in last 30 days
+        depletion_30d: Total depletions in last 30 days
+        ratio_30d: A30_Ship:A30_Dep ratio (shipment_30d / depletion_30d)
+        shipment_90d: Total shipments in last 90 days
+        depletion_90d: Total depletions in last 90 days
+        ratio_90d: A90_Ship:A90_Dep ratio (shipment_90d / depletion_90d)
+        calculated_at: Timestamp when metrics were calculated
+    """
+    sku: str
+    sku_id: UUID
+    shipment_30d: int
+    depletion_30d: int
+    ratio_30d: MetricValue
+    shipment_90d: int
+    depletion_90d: int
+    ratio_90d: MetricValue
     calculated_at: datetime
 
 
@@ -150,6 +182,47 @@ def calculate_daily_depletion_rate(
     if days <= 0:
         return None
     return total_depletion / days
+
+
+def calculate_ship_dep_ratio(
+    shipments: int,
+    depletions: int,
+) -> MetricValue:
+    """Calculate shipment to depletion ratio.
+
+    Formula: A_Ship:A_Dep = shipments / depletions
+
+    This ratio indicates inventory flow balance:
+    - > 1.0: Building inventory (more coming in than going out)
+    - = 1.0: Balanced flow
+    - < 1.0: Depleting inventory (more going out than coming in)
+
+    Args:
+        shipments: Total units shipped (received) in the period
+        depletions: Total units depleted (sold) in the period
+
+    Returns:
+        Ratio as a float, or None if depletions is zero
+        (cannot calculate ratio with no depletions)
+
+    Examples:
+        >>> calculate_ship_dep_ratio(300, 200)  # 300 shipped, 200 depleted
+        1.5  # Building inventory
+
+        >>> calculate_ship_dep_ratio(200, 200)  # Equal flow
+        1.0  # Balanced
+
+        >>> calculate_ship_dep_ratio(100, 200)  # 100 shipped, 200 depleted
+        0.5  # Depleting inventory
+
+        >>> calculate_ship_dep_ratio(100, 0)  # No depletions
+        None  # Cannot calculate
+    """
+    if depletions <= 0:
+        # Cannot calculate ratio with zero or negative depletions
+        return None
+
+    return shipments / depletions
 
 
 async def get_current_inventory(
@@ -287,6 +360,148 @@ async def get_depletion_total(
 
     result = await session.execute(query)
     return result.scalar() or 0
+
+
+async def get_shipment_total(
+    session: AsyncSession,
+    sku_id: UUID,
+    days: int,
+    warehouse_id: UUID | None = None,
+    distributor_id: UUID | None = None,
+    as_of: datetime | None = None,
+) -> int:
+    """Get total shipments for a SKU over a time period.
+
+    Args:
+        session: Database session
+        sku_id: Product SKU UUID
+        days: Number of days to look back
+        warehouse_id: Optional warehouse filter
+        distributor_id: Optional distributor filter
+        as_of: Calculate as of this time (default: now)
+
+    Returns:
+        Total shipment quantity
+    """
+    if as_of is None:
+        as_of = datetime.now(UTC)
+
+    start_time = as_of - timedelta(days=days)
+
+    query = (
+        select(func.coalesce(func.sum(InventoryEvent.quantity), 0))
+        .where(InventoryEvent.sku_id == sku_id)
+        .where(InventoryEvent.event_type == "shipment")
+        .where(InventoryEvent.time >= start_time)
+        .where(InventoryEvent.time <= as_of)
+    )
+
+    if warehouse_id:
+        query = query.where(InventoryEvent.warehouse_id == warehouse_id)
+    if distributor_id:
+        query = query.where(InventoryEvent.distributor_id == distributor_id)
+
+    result = await session.execute(query)
+    return result.scalar() or 0
+
+
+async def calculate_ship_dep_ratio_for_sku(
+    session: AsyncSession,
+    sku_id: UUID,
+    warehouse_id: UUID | None = None,
+    distributor_id: UUID | None = None,
+    as_of: datetime | None = None,
+) -> ShipDepRatioMetrics:
+    """Calculate shipment:depletion ratio metrics for a specific SKU.
+
+    Args:
+        session: Database session
+        sku_id: Product SKU UUID
+        warehouse_id: Optional warehouse filter
+        distributor_id: Optional distributor filter
+        as_of: Calculate as of this time (default: now)
+
+    Returns:
+        ShipDepRatioMetrics with calculated values for both 30-day and 90-day
+    """
+    if as_of is None:
+        as_of = datetime.now(UTC)
+
+    # Get product info
+    product_query = select(Product).where(Product.id == sku_id)
+    result = await session.execute(product_query)
+    product = result.scalar_one()
+
+    # Get 30-day totals
+    shipment_30d = await get_shipment_total(
+        session, sku_id, days=30,
+        warehouse_id=warehouse_id, distributor_id=distributor_id, as_of=as_of
+    )
+    depletion_30d = await get_depletion_total(
+        session, sku_id, days=30,
+        warehouse_id=warehouse_id, distributor_id=distributor_id, as_of=as_of
+    )
+
+    # Get 90-day totals
+    shipment_90d = await get_shipment_total(
+        session, sku_id, days=90,
+        warehouse_id=warehouse_id, distributor_id=distributor_id, as_of=as_of
+    )
+    depletion_90d = await get_depletion_total(
+        session, sku_id, days=90,
+        warehouse_id=warehouse_id, distributor_id=distributor_id, as_of=as_of
+    )
+
+    # Calculate ratios
+    ratio_30d = calculate_ship_dep_ratio(shipment_30d, depletion_30d)
+    ratio_90d = calculate_ship_dep_ratio(shipment_90d, depletion_90d)
+
+    return ShipDepRatioMetrics(
+        sku=product.sku,
+        sku_id=sku_id,
+        shipment_30d=shipment_30d,
+        depletion_30d=depletion_30d,
+        ratio_30d=ratio_30d,
+        shipment_90d=shipment_90d,
+        depletion_90d=depletion_90d,
+        ratio_90d=ratio_90d,
+        calculated_at=as_of,
+    )
+
+
+async def calculate_ship_dep_ratio_all_skus(
+    session: AsyncSession,
+    warehouse_id: UUID | None = None,
+    distributor_id: UUID | None = None,
+    as_of: datetime | None = None,
+) -> list[ShipDepRatioMetrics]:
+    """Calculate shipment:depletion ratio metrics for all tracked SKUs.
+
+    Args:
+        session: Database session
+        warehouse_id: Optional warehouse filter
+        distributor_id: Optional distributor filter
+        as_of: Calculate as of this time (default: now)
+
+    Returns:
+        List of ShipDepRatioMetrics for each SKU
+    """
+    if as_of is None:
+        as_of = datetime.now(UTC)
+
+    # Get all products
+    products_query = select(Product).order_by(Product.sku)
+    result = await session.execute(products_query)
+    products = result.scalars().all()
+
+    metrics = []
+    for product in products:
+        sku_metrics = await calculate_ship_dep_ratio_for_sku(
+            session, product.id, warehouse_id, distributor_id, as_of
+        )
+        metrics.append(sku_metrics)
+
+    return metrics
 
 
 async def calculate_doh_t30_for_sku(

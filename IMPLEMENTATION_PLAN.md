@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 18
+- Completed: 19
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -125,9 +125,11 @@
   - Completed: 2026-02-03
   - Notes: Created calculate_doh_t90() pure function with same pattern as calculate_doh_t30(). Formula: DOH_T90 = current_inventory / (depletion_90d / 90). Returns None for zero depletion. Extended DOHMetrics dataclass to include doh_t90, depletion_90d, and daily_rate_90d fields. Updated calculate_doh_t30_for_sku() to calculate both T30 and T90 metrics. Added calculate_doh_t90_for_sku() and calculate_doh_t90_all_skus() as semantic aliases. 14 new tests covering T90 calculation, 1% variance verification, and comparison with T30 for seasonal smoothing.
 
-- [ ] **Task 1.5.3**: Implement A30_Ship:A30_Dep ratio calculation
+- [x] **Task 1.5.3**: Implement A30_Ship:A30_Dep ratio calculation
   - Spec: specs/04-inventory-metrics.md
   - Acceptance: Ratio calculated correctly for 30-day window
+  - Completed: 2026-02-03
+  - Notes: Created calculate_ship_dep_ratio() pure function and ShipDepRatioMetrics dataclass. Formula: A_Ship:A_Dep = shipments / depletions. Returns None for zero depletions (cannot calculate). Added get_shipment_total() helper (mirrors get_depletion_total). Created calculate_ship_dep_ratio_for_sku() and calculate_ship_dep_ratio_all_skus() async functions with warehouse_id and distributor_id filter support. Also calculates A90_Ship:A90_Dep ratio. 23 new tests covering pure function, dataclass, helper, and SKU calculation functions.
 
 - [ ] **Task 1.5.4**: Implement velocity trend ratios (A30:A90_Dep)
   - Spec: specs/04-inventory-metrics.md
