@@ -178,6 +178,103 @@ ORDER BY
     a30_ship_dep_ratio ASC NULLS LAST;
 """
 
+# SQL query for Forecast Overview
+FORECAST_OVERVIEW_QUERY = """
+-- Forecast Overview: 26-week demand forecasts with confidence intervals
+-- Shows weekly point estimates (yhat) with lower/upper bounds for all SKUs
+-- Chart should display as line chart with confidence bands
+SELECT
+    p.sku,
+    p.name as product_name,
+    f.forecast_date,
+    ROUND(f.yhat::NUMERIC, 0) as forecast,
+    ROUND(f.yhat_lower::NUMERIC, 0) as lower_bound,
+    ROUND(f.yhat_upper::NUMERIC, 0) as upper_bound,
+    ROUND((f.interval_width * 100)::NUMERIC, 0) as confidence_pct,
+    f.model_trained_at,
+    f.mape
+FROM forecasts f
+JOIN products p ON f.sku_id = p.id
+WHERE f.forecast_date >= NOW()
+  AND f.model_trained_at = (
+    SELECT MAX(model_trained_at)
+    FROM forecasts f2
+    WHERE f2.sku_id = f.sku_id
+  )
+ORDER BY p.sku, f.forecast_date;
+"""
+
+# SQL query for Forecast by SKU (with parameter)
+FORECAST_BY_SKU_QUERY = """
+-- Forecast by SKU: Weekly demand forecast for a single SKU
+-- Use with SKU parameter filter in Redash
+-- Designed for time series chart with confidence bands
+SELECT
+    f.forecast_date,
+    ROUND(f.yhat::NUMERIC, 0) as forecast,
+    ROUND(f.yhat_lower::NUMERIC, 0) as lower_bound,
+    ROUND(f.yhat_upper::NUMERIC, 0) as upper_bound,
+    ROUND((f.yhat_upper - f.yhat_lower)::NUMERIC, 0) as band_width,
+    f.mape as model_mape
+FROM forecasts f
+JOIN products p ON f.sku_id = p.id
+WHERE p.sku = '{{ sku }}'
+  AND f.forecast_date >= NOW()
+  AND f.model_trained_at = (
+    SELECT MAX(model_trained_at)
+    FROM forecasts f2
+    WHERE f2.sku_id = f.sku_id
+  )
+ORDER BY f.forecast_date;
+"""
+
+# SQL query for Forecast vs Actuals comparison
+FORECAST_VS_ACTUALS_QUERY = """
+-- Forecast vs Actuals: Compare historical forecasts against actual depletions
+-- Useful for model evaluation and visualization
+-- Shows both lines on same chart for comparison
+WITH actuals AS (
+    SELECT
+        sku_id,
+        DATE_TRUNC('week', time) as week_date,
+        SUM(ABS(quantity)) as actual_quantity
+    FROM inventory_events
+    WHERE event_type = 'depletion'
+      AND time >= NOW() - INTERVAL '26 weeks'
+    GROUP BY sku_id, DATE_TRUNC('week', time)
+),
+forecast_data AS (
+    SELECT
+        sku_id,
+        DATE_TRUNC('week', forecast_date) as week_date,
+        AVG(yhat) as forecast,
+        AVG(yhat_lower) as lower_bound,
+        AVG(yhat_upper) as upper_bound
+    FROM forecasts
+    WHERE forecast_date < NOW()
+      AND forecast_date >= NOW() - INTERVAL '26 weeks'
+    GROUP BY sku_id, DATE_TRUNC('week', forecast_date)
+)
+SELECT
+    p.sku,
+    p.name as product_name,
+    COALESCE(f.week_date, a.week_date) as week,
+    ROUND(a.actual_quantity::NUMERIC, 0) as actual,
+    ROUND(f.forecast::NUMERIC, 0) as forecast,
+    ROUND(f.lower_bound::NUMERIC, 0) as lower_bound,
+    ROUND(f.upper_bound::NUMERIC, 0) as upper_bound,
+    CASE
+        WHEN a.actual_quantity IS NOT NULL AND f.forecast IS NOT NULL
+        THEN ROUND(ABS(a.actual_quantity - f.forecast) / NULLIF(a.actual_quantity, 0) * 100, 1)
+        ELSE NULL
+    END as error_pct
+FROM products p
+LEFT JOIN forecast_data f ON p.id = f.sku_id
+LEFT JOIN actuals a ON p.id = a.sku_id AND f.week_date = a.week_date
+WHERE f.week_date IS NOT NULL OR a.week_date IS NOT NULL
+ORDER BY p.sku, week;
+"""
+
 # SQL query for Stock-Out Risk Alert (DOH_T30 < 14)
 STOCKOUT_ALERT_QUERY = """
 -- Stock-Out Risk Alert: Triggers when DOH_T30 < 14 days
@@ -947,6 +1044,217 @@ def setup_ratio_visualizations(
     return created_visualizations
 
 
+def setup_forecast_queries(
+    client: RedashClient, data_source_id: int
+) -> dict[str, int]:
+    """Set up forecast queries in Redash.
+
+    Creates queries for:
+    - Forecast Overview: 26-week forecasts for all SKUs
+    - Forecast by SKU: Single SKU forecast with parameter
+    - Forecast vs Actuals: Historical comparison
+
+    Args:
+        client: Redash API client
+        data_source_id: ID of the data source to use
+
+    Returns:
+        Dictionary mapping query names to query IDs
+    """
+    queries_to_create = [
+        {
+            "name": "Forecast Overview",
+            "query": FORECAST_OVERVIEW_QUERY,
+            "description": "26-week demand forecasts with confidence intervals for all SKUs. "
+            "Shows weekly point estimates with lower/upper bounds from Prophet model.",
+        },
+        {
+            "name": "Forecast by SKU",
+            "query": FORECAST_BY_SKU_QUERY,
+            "description": "Weekly demand forecast for a single SKU. "
+            "Use the 'sku' parameter to select SKU (e.g., UFBub250, UFRos250).",
+        },
+        {
+            "name": "Forecast vs Actuals",
+            "query": FORECAST_VS_ACTUALS_QUERY,
+            "description": "Compare historical forecasts against actual depletions. "
+            "Useful for model evaluation and accuracy tracking.",
+        },
+    ]
+
+    # Get existing queries
+    existing_queries = client.get_queries()
+    created_queries: dict[str, int] = {}
+
+    for query_def in queries_to_create:
+        existing = find_query_by_name(existing_queries, query_def["name"])
+
+        if existing:
+            # Update existing query
+            print(f"Updating existing query: {query_def['name']} (ID: {existing['id']})")
+            client.update_query(
+                query_id=existing["id"],
+                name=query_def["name"],
+                query=query_def["query"],
+                description=query_def["description"],
+            )
+            created_queries[query_def["name"]] = existing["id"]
+        else:
+            # Create new query
+            print(f"Creating query: {query_def['name']}")
+            result = client.create_query(
+                name=query_def["name"],
+                query=query_def["query"],
+                data_source_id=data_source_id,
+                description=query_def["description"],
+            )
+            created_queries[query_def["name"]] = result["id"]
+            print(f"  Created with ID: {result['id']}")
+
+    return created_queries
+
+
+def setup_forecast_visualizations(
+    client: RedashClient, query_ids: dict[str, int]
+) -> dict[str, int]:
+    """Set up visualizations for forecast queries.
+
+    Creates line charts with confidence bands for forecast visualization:
+    - Main line: Point forecast (yhat)
+    - Shaded area: Confidence interval (yhat_lower to yhat_upper)
+
+    Args:
+        client: Redash API client
+        query_ids: Dictionary mapping query names to IDs
+
+    Returns:
+        Dictionary mapping visualization names to visualization IDs
+    """
+    created_visualizations: dict[str, int] = {}
+
+    # Visualization for Forecast Overview (multi-line chart by SKU)
+    if "Forecast Overview" in query_ids:
+        query_id = query_ids["Forecast Overview"]
+
+        # Check if visualization already exists
+        query_data = client.get_query(query_id)
+        existing_vis = None
+        for vis in query_data.get("visualizations", []):
+            if vis.get("name") == "Forecast Chart":
+                existing_vis = vis
+                break
+
+        if existing_vis:
+            print(f"  Visualization 'Forecast Chart' already exists (ID: {existing_vis['id']})")
+            created_visualizations["Forecast Chart"] = existing_vis["id"]
+        else:
+            print("Creating visualization: Forecast Chart for Forecast Overview")
+
+            # Line chart with confidence bands
+            # Redash doesn't natively support confidence bands, but we can show
+            # forecast, lower_bound, and upper_bound as separate series
+            chart_options = {
+                "globalSeriesType": "line",
+                "columnMapping": {
+                    "forecast_date": "x",
+                    "forecast": "y",
+                    "lower_bound": "y",
+                    "upper_bound": "y",
+                    "sku": "series",
+                },
+                "xAxis": {
+                    "type": "datetime",
+                    "labels": {"enabled": True},
+                },
+                "yAxis": [
+                    {
+                        "type": "linear",
+                        "title": {"text": "Forecasted Demand (units)"},
+                    }
+                ],
+                "seriesOptions": {
+                    "forecast": {"type": "line", "yAxis": 0},
+                },
+                "legend": {"enabled": True, "placement": "auto"},
+                "showDataLabels": False,
+                "numberFormat": "0",
+                "dateTimeFormat": "YYYY-MM-DD",
+            }
+
+            try:
+                vis = client.create_visualization(
+                    query_id=query_id,
+                    name="Forecast Chart",
+                    vis_type="CHART",
+                    options=chart_options,
+                )
+                created_visualizations["Forecast Chart"] = vis["id"]
+                print(f"  Created with ID: {vis['id']}")
+            except httpx.HTTPStatusError as e:
+                print(f"  Warning: Could not create visualization: {e}")
+
+    # Visualization for Forecast vs Actuals (comparison chart)
+    if "Forecast vs Actuals" in query_ids:
+        query_id = query_ids["Forecast vs Actuals"]
+
+        # Check if visualization already exists
+        query_data = client.get_query(query_id)
+        existing_vis = None
+        for vis in query_data.get("visualizations", []):
+            if vis.get("name") == "Forecast vs Actuals Chart":
+                existing_vis = vis
+                break
+
+        if existing_vis:
+            print(f"  Visualization 'Forecast vs Actuals Chart' already exists (ID: {existing_vis['id']})")
+            created_visualizations["Forecast vs Actuals Chart"] = existing_vis["id"]
+        else:
+            print("Creating visualization: Forecast vs Actuals Chart")
+
+            # Line chart comparing forecast to actual
+            chart_options = {
+                "globalSeriesType": "line",
+                "columnMapping": {
+                    "week": "x",
+                    "actual": "y",
+                    "forecast": "y",
+                    "sku": "series",
+                },
+                "xAxis": {
+                    "type": "datetime",
+                    "labels": {"enabled": True},
+                },
+                "yAxis": [
+                    {
+                        "type": "linear",
+                        "title": {"text": "Units"},
+                    }
+                ],
+                "seriesOptions": {
+                    "actual": {"type": "line", "color": "#3498DB", "yAxis": 0},
+                    "forecast": {"type": "line", "color": "#E74C3C", "yAxis": 0},
+                },
+                "legend": {"enabled": True, "placement": "auto"},
+                "showDataLabels": False,
+                "numberFormat": "0",
+                "dateTimeFormat": "YYYY-MM-DD",
+            }
+
+            try:
+                vis = client.create_visualization(
+                    query_id=query_id,
+                    name="Forecast vs Actuals Chart",
+                    vis_type="CHART",
+                    options=chart_options,
+                )
+                created_visualizations["Forecast vs Actuals Chart"] = vis["id"]
+                print(f"  Created with ID: {vis['id']}")
+            except httpx.HTTPStatusError as e:
+                print(f"  Warning: Could not create visualization: {e}")
+
+    return created_visualizations
+
+
 def setup_stockout_alert(
     client: RedashClient, data_source_id: int
 ) -> dict[str, Any] | None:
@@ -1303,17 +1611,30 @@ def main() -> int:
 
         print(f"Using data source: {data_source['name']} (ID: {data_source['id']})")
 
-        # Set up queries
+        # Set up DOH queries
         query_ids = setup_doh_queries(client, data_source["id"])
-        print(f"\nCreated/updated {len(query_ids)} queries")
+        print(f"\nCreated/updated {len(query_ids)} DOH queries")
 
         # Set up ratio visualizations with color coding
-        print("\nSetting up visualizations...")
+        print("\nSetting up ratio visualizations...")
         vis_ids = setup_ratio_visualizations(client, query_ids)
-        print(f"Created/updated {len(vis_ids)} visualizations")
+        print(f"Created/updated {len(vis_ids)} ratio visualizations")
+
+        # Set up forecast queries
+        print("\nSetting up forecast queries...")
+        forecast_query_ids = setup_forecast_queries(client, data_source["id"])
+        print(f"Created/updated {len(forecast_query_ids)} forecast queries")
+
+        # Set up forecast visualizations
+        print("\nSetting up forecast visualizations...")
+        forecast_vis_ids = setup_forecast_visualizations(client, forecast_query_ids)
+        print(f"Created/updated {len(forecast_vis_ids)} forecast visualizations")
+
+        # Merge all query_ids for dashboard
+        all_query_ids = {**query_ids, **forecast_query_ids}
 
         # Set up dashboard
-        dashboard = setup_doh_dashboard(client, query_ids)
+        dashboard = setup_doh_dashboard(client, all_query_ids)
         print(f"\nDashboard URL: {redash_url}/dashboards/{dashboard['id']}")
 
         # Set up stock-out alert

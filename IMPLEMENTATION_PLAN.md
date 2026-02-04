@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 31
+- Completed: 32
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -213,9 +213,11 @@
   - Completed: 2026-02-03
   - Notes: Created src/tasks/forecast_retrain.py with retrain_forecasts Celery task that runs weekly on Mondays at 7 AM UTC. Task trains Prophet models for all 4 SKUs, generates 26-week forecasts, and stores results in new forecasts table. Created Forecast SQLAlchemy model with proper indexes. Created Alembic migration (a1b2c3d4e5f6) for forecasts table. Added beat schedule to celery_app.py. 23 new tests covering task functions, model, and schedule configuration.
 
-- [ ] **Task 2.1.5**: Add forecast visualization to Redash
+- [x] **Task 2.1.5**: Add forecast visualization to Redash
   - Spec: specs/05-demand-forecasting.md
   - Acceptance: Chart shows forecast with confidence bands
+  - Completed: 2026-02-03
+  - Notes: Created SQL queries for forecast visualization: forecast_overview.sql (26-week forecasts with confidence intervals for all SKUs), forecast_by_sku.sql (single SKU with parameter), forecast_vs_actuals.sql (compare historical forecasts to actual depletions). Added setup_forecast_queries() and setup_forecast_visualizations() functions to Redash setup script. Line charts with datetime x-axis for time series visualization. 35 new tests covering SQL queries, script functions, and visualization configuration.
 
 ### Priority 2.2: Email Classification
 - [ ] **Task 2.2.1**: Implement Gmail API OAuth connection
