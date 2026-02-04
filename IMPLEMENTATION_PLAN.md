@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 3
+- Completed: 4
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -26,9 +26,11 @@
   - Notes: Async template used, env.py loads DATABASE_URL from settings, greenlet added for SQLAlchemy async support
 
 ### Priority 1.2: Database Schema
-- [ ] **Task 1.2.1**: Create SQLAlchemy models for products, warehouses, distributors
+- [x] **Task 1.2.1**: Create SQLAlchemy models for products, warehouses, distributors
   - Spec: specs/01-database-schema.md
   - Acceptance: Models defined with proper relationships and constraints
+  - Completed: 2026-02-03
+  - Notes: Created Product, Warehouse, and Distributor models with UUID primary keys, proper constraints (unique SKU/code), indexes, and nullable fields per spec
 
 - [ ] **Task 1.2.2**: Create inventory_events table as TimescaleDB hypertable
   - Spec: specs/01-database-schema.md
