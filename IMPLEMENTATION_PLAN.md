@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 1
+- Completed: 2
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -13,9 +13,11 @@
   - Acceptance: `poetry install` succeeds, project structure created
   - Completed: 2026-02-03
 
-- [ ] **Task 1.1.2**: Create Railway project and add PostgreSQL database
+- [x] **Task 1.1.2**: Create Railway project and add PostgreSQL database
   - Spec: specs/01-database-schema.md
   - Acceptance: Railway project exists with PostgreSQL service running
+  - Completed: 2026-02-03
+  - Notes: Project "une-femme-supply-chain" created at https://railway.com/project/e7663c26-3180-405c-9574-c9945ea9f643
 
 - [ ] **Task 1.1.3**: Configure Alembic for database migrations
   - Spec: specs/01-database-schema.md
@@ -228,6 +230,11 @@
 _Updated by Ralph during execution - document any findings, blockers, or spec corrections here._
 
 - **2026-02-03**: Python 3.13 is available on the system. Poetry installed and project uses Python ^3.11 for compatibility with Prophet and other dependencies. All dependencies install successfully including FastAPI, SQLAlchemy, Celery, Prophet, LangGraph, and Azure Document Intelligence SDK.
+
+- **2026-02-03**: Railway PostgreSQL is version 17.7. **TimescaleDB is NOT available** on Railway's standard PostgreSQL offering. The spec mentions TimescaleDB for hypertables and continuous aggregates, but these features will need to be implemented using standard PostgreSQL features:
+  - Instead of hypertables: Use regular tables with time-based indexes (BRIN indexes are efficient for time-series)
+  - Instead of continuous aggregates: Use materialized views with scheduled refreshes
+  - Task 1.2.2 and 1.2.4 will need spec adjustments to use standard PostgreSQL alternatives
 
 ---
 
