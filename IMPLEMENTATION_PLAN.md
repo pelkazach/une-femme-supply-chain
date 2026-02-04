@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 19
+- Completed: 20
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -131,9 +131,11 @@
   - Completed: 2026-02-03
   - Notes: Created calculate_ship_dep_ratio() pure function and ShipDepRatioMetrics dataclass. Formula: A_Ship:A_Dep = shipments / depletions. Returns None for zero depletions (cannot calculate). Added get_shipment_total() helper (mirrors get_depletion_total). Created calculate_ship_dep_ratio_for_sku() and calculate_ship_dep_ratio_all_skus() async functions with warehouse_id and distributor_id filter support. Also calculates A90_Ship:A90_Dep ratio. 23 new tests covering pure function, dataclass, helper, and SKU calculation functions.
 
-- [ ] **Task 1.5.4**: Implement velocity trend ratios (A30:A90_Dep)
+- [x] **Task 1.5.4**: Implement velocity trend ratios (A30:A90_Dep)
   - Spec: specs/04-inventory-metrics.md
   - Acceptance: >1 indicates acceleration, <1 indicates deceleration
+  - Completed: 2026-02-03
+  - Notes: Created calculate_velocity_trend() and calculate_velocity_trend_from_totals() pure functions. Formula: A30:A90 = (total_30d / 30) / (total_90d / 90). Returns None for zero historical data (cannot calculate trend). Created VelocityTrendMetrics dataclass with depletion and shipment velocity trends. Added calculate_velocity_trend_for_sku() and calculate_velocity_trend_all_skus() async functions with warehouse_id and distributor_id filter support. 26 new tests covering pure functions, dataclass, and SKU calculation functions.
 
 - [ ] **Task 1.5.5**: Create metrics API endpoint
   - Spec: specs/04-inventory-metrics.md

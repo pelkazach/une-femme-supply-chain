@@ -9,6 +9,7 @@ import pytest
 from src.services.metrics import (
     DOHMetrics,
     ShipDepRatioMetrics,
+    VelocityTrendMetrics,
     calculate_daily_depletion_rate,
     calculate_doh_t30,
     calculate_doh_t30_all_skus,
@@ -19,6 +20,10 @@ from src.services.metrics import (
     calculate_ship_dep_ratio,
     calculate_ship_dep_ratio_all_skus,
     calculate_ship_dep_ratio_for_sku,
+    calculate_velocity_trend,
+    calculate_velocity_trend_all_skus,
+    calculate_velocity_trend_for_sku,
+    calculate_velocity_trend_from_totals,
     get_current_inventory,
     get_depletion_total,
     get_shipment_total,
@@ -1182,6 +1187,493 @@ class TestCalculateShipDepRatioAllSkus:
             ]
 
             result = await calculate_ship_dep_ratio_all_skus(
+                mock_session,
+                warehouse_id=warehouse_id,
+                distributor_id=distributor_id,
+            )
+
+            assert len(result) == 2
+
+            # Verify filters were passed to each call
+            assert mock_calc.call_count == 2
+            for call in mock_calc.call_args_list:
+                # Args are: session, product.id, warehouse_id, distributor_id, as_of
+                assert call[0][2] == warehouse_id
+                assert call[0][3] == distributor_id
+
+
+class TestCalculateVelocityTrend:
+    """Tests for the calculate_velocity_trend function."""
+
+    def test_spec_example_accelerating(self) -> None:
+        """Test spec example: 30d velocity 100/day, 90d velocity 80/day = 1.25."""
+        # From spec: A30:A90_Dep = 1.25 (accelerating)
+        result = calculate_velocity_trend(100.0, 80.0)
+        assert result is not None
+        assert abs(result - 1.25) < 0.001
+
+    def test_accelerating_demand(self) -> None:
+        """Test ratio > 1 indicates accelerating demand."""
+        # Recent rate is 20% higher than historical
+        result = calculate_velocity_trend(120.0, 100.0)
+        assert result is not None
+        assert result > 1.0
+        assert abs(result - 1.2) < 0.001
+
+    def test_decelerating_demand(self) -> None:
+        """Test ratio < 1 indicates decelerating demand."""
+        # Recent rate is 25% lower than historical
+        result = calculate_velocity_trend(60.0, 80.0)
+        assert result is not None
+        assert result < 1.0
+        assert abs(result - 0.75) < 0.001
+
+    def test_stable_velocity(self) -> None:
+        """Test ratio = 1 indicates stable velocity."""
+        result = calculate_velocity_trend(100.0, 100.0)
+        assert result is not None
+        assert result == 1.0
+
+    def test_zero_historical_rate_returns_none(self) -> None:
+        """Test that zero historical rate returns None (cannot calculate)."""
+        result = calculate_velocity_trend(100.0, 0.0)
+        assert result is None
+
+    def test_negative_historical_rate_returns_none(self) -> None:
+        """Test that negative historical rate returns None."""
+        result = calculate_velocity_trend(100.0, -50.0)
+        assert result is None
+
+    def test_zero_recent_rate_returns_zero(self) -> None:
+        """Test that zero recent rate with positive historical returns 0."""
+        result = calculate_velocity_trend(0.0, 100.0)
+        assert result is not None
+        assert result == 0.0
+
+    def test_high_acceleration(self) -> None:
+        """Test high acceleration scenario."""
+        # Recent rate is 3x historical (200% increase)
+        result = calculate_velocity_trend(300.0, 100.0)
+        assert result is not None
+        assert abs(result - 3.0) < 0.001
+
+    def test_severe_deceleration(self) -> None:
+        """Test severe deceleration scenario."""
+        # Recent rate is only 10% of historical
+        result = calculate_velocity_trend(10.0, 100.0)
+        assert result is not None
+        assert abs(result - 0.1) < 0.001
+
+    def test_fractional_rates(self) -> None:
+        """Test with fractional daily rates."""
+        # Small volume SKU: 0.5/day recent vs 0.4/day historical
+        result = calculate_velocity_trend(0.5, 0.4)
+        assert result is not None
+        assert abs(result - 1.25) < 0.001
+
+
+class TestCalculateVelocityTrendFromTotals:
+    """Tests for the calculate_velocity_trend_from_totals function."""
+
+    def test_spec_example_accelerating(self) -> None:
+        """Test spec example using totals."""
+        # 30d total = 3000 (100/day), 90d total = 7200 (80/day)
+        # A30:A90 = 100/80 = 1.25
+        result = calculate_velocity_trend_from_totals(3000, 7200)
+        assert result is not None
+        assert abs(result - 1.25) < 0.001
+
+    def test_decelerating_from_totals(self) -> None:
+        """Test decelerating demand from totals."""
+        # 30d total = 1800 (60/day), 90d total = 7200 (80/day)
+        # A30:A90 = 60/80 = 0.75
+        result = calculate_velocity_trend_from_totals(1800, 7200)
+        assert result is not None
+        assert abs(result - 0.75) < 0.001
+
+    def test_stable_from_totals(self) -> None:
+        """Test stable velocity from totals."""
+        # 30d total = 3000 (100/day), 90d total = 9000 (100/day)
+        # A30:A90 = 100/100 = 1.0
+        result = calculate_velocity_trend_from_totals(3000, 9000)
+        assert result is not None
+        assert result == 1.0
+
+    def test_zero_90d_returns_none(self) -> None:
+        """Test that zero 90d total returns None."""
+        result = calculate_velocity_trend_from_totals(100, 0)
+        assert result is None
+
+    def test_zero_30d_returns_zero(self) -> None:
+        """Test that zero 30d with positive 90d returns 0."""
+        result = calculate_velocity_trend_from_totals(0, 900)
+        assert result is not None
+        assert result == 0.0
+
+    def test_realistic_wine_volumes(self) -> None:
+        """Test with realistic wine distribution volumes."""
+        # 30d: 450 cases depleted (15/day)
+        # 90d: 1080 cases depleted (12/day)
+        # Acceleration: 15/12 = 1.25
+        result = calculate_velocity_trend_from_totals(450, 1080)
+        assert result is not None
+        assert abs(result - 1.25) < 0.001
+
+
+class TestVelocityTrendMetricsDataclass:
+    """Tests for the VelocityTrendMetrics dataclass."""
+
+    def test_create_metrics(self) -> None:
+        """Test creating a VelocityTrendMetrics instance."""
+        sku_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        metrics = VelocityTrendMetrics(
+            sku="UFBub250",
+            sku_id=sku_id,
+            depletion_30d=3000,
+            depletion_90d=7200,
+            daily_rate_30d_dep=100.0,
+            daily_rate_90d_dep=80.0,
+            velocity_trend_dep=1.25,
+            shipment_30d=2700,
+            shipment_90d=6300,
+            daily_rate_30d_ship=90.0,
+            daily_rate_90d_ship=70.0,
+            velocity_trend_ship=1.286,
+            calculated_at=now,
+        )
+
+        assert metrics.sku == "UFBub250"
+        assert metrics.sku_id == sku_id
+        assert metrics.depletion_30d == 3000
+        assert metrics.depletion_90d == 7200
+        assert metrics.daily_rate_30d_dep == 100.0
+        assert metrics.daily_rate_90d_dep == 80.0
+        assert metrics.velocity_trend_dep == 1.25
+        assert metrics.shipment_30d == 2700
+        assert metrics.shipment_90d == 6300
+        assert metrics.daily_rate_30d_ship == 90.0
+        assert metrics.daily_rate_90d_ship == 70.0
+        assert abs(metrics.velocity_trend_ship - 1.286) < 0.001
+        assert metrics.calculated_at == now
+
+    def test_metrics_with_none_trends(self) -> None:
+        """Test creating metrics with None trends (zero historical case)."""
+        sku_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        metrics = VelocityTrendMetrics(
+            sku="UFRos250",
+            sku_id=sku_id,
+            depletion_30d=100,
+            depletion_90d=0,
+            daily_rate_30d_dep=3.33,
+            daily_rate_90d_dep=0.0,
+            velocity_trend_dep=None,
+            shipment_30d=200,
+            shipment_90d=0,
+            daily_rate_30d_ship=6.67,
+            daily_rate_90d_ship=0.0,
+            velocity_trend_ship=None,
+            calculated_at=now,
+        )
+
+        assert metrics.velocity_trend_dep is None
+        assert metrics.velocity_trend_ship is None
+
+    def test_metrics_immutable(self) -> None:
+        """Test that VelocityTrendMetrics is immutable (frozen dataclass)."""
+        sku_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        metrics = VelocityTrendMetrics(
+            sku="UFRed250",
+            sku_id=sku_id,
+            depletion_30d=3000,
+            depletion_90d=7200,
+            daily_rate_30d_dep=100.0,
+            daily_rate_90d_dep=80.0,
+            velocity_trend_dep=1.25,
+            shipment_30d=2700,
+            shipment_90d=6300,
+            daily_rate_30d_ship=90.0,
+            daily_rate_90d_ship=70.0,
+            velocity_trend_ship=1.286,
+            calculated_at=now,
+        )
+
+        with pytest.raises(AttributeError):
+            metrics.sku = "NewSKU"  # type: ignore
+
+
+class TestCalculateVelocityTrendForSku:
+    """Tests for the calculate_velocity_trend_for_sku function."""
+
+    @pytest.mark.asyncio
+    async def test_calculate_velocity_trend_basic(self) -> None:
+        """Test basic velocity trend calculation for a SKU."""
+        mock_session = AsyncMock()
+        sku_id = uuid.uuid4()
+
+        # Mock product query
+        mock_product = MagicMock()
+        mock_product.sku = "UFBub250"
+        mock_product.id = sku_id
+
+        with patch(
+            "src.services.metrics.get_depletion_total",
+            new_callable=AsyncMock,
+        ) as mock_get_dep:
+            # Return 3000 for 30d, 7200 for 90d (accelerating)
+            mock_get_dep.side_effect = [3000, 7200]
+
+            with patch(
+                "src.services.metrics.get_shipment_total",
+                new_callable=AsyncMock,
+            ) as mock_get_ship:
+                # Return 2700 for 30d, 6300 for 90d (also accelerating)
+                mock_get_ship.side_effect = [2700, 6300]
+
+                # Mock the product query result
+                product_result = MagicMock()
+                product_result.scalar_one.return_value = mock_product
+                mock_session.execute.return_value = product_result
+
+                result = await calculate_velocity_trend_for_sku(mock_session, sku_id)
+
+                assert result.sku == "UFBub250"
+                assert result.sku_id == sku_id
+                assert result.depletion_30d == 3000
+                assert result.depletion_90d == 7200
+                assert result.daily_rate_30d_dep is not None
+                assert abs(result.daily_rate_30d_dep - 100.0) < 0.01
+                assert result.daily_rate_90d_dep is not None
+                assert abs(result.daily_rate_90d_dep - 80.0) < 0.01
+                assert result.velocity_trend_dep is not None
+                assert abs(result.velocity_trend_dep - 1.25) < 0.01  # Accelerating
+                assert result.shipment_30d == 2700
+                assert result.shipment_90d == 6300
+
+    @pytest.mark.asyncio
+    async def test_calculate_velocity_trend_decelerating(self) -> None:
+        """Test decelerating velocity trend."""
+        mock_session = AsyncMock()
+        sku_id = uuid.uuid4()
+
+        mock_product = MagicMock()
+        mock_product.sku = "UFRos250"
+        mock_product.id = sku_id
+
+        with patch(
+            "src.services.metrics.get_depletion_total",
+            new_callable=AsyncMock,
+        ) as mock_get_dep:
+            # 30d: 1800 (60/day), 90d: 7200 (80/day) -> 0.75 decelerating
+            mock_get_dep.side_effect = [1800, 7200]
+
+            with patch(
+                "src.services.metrics.get_shipment_total",
+                new_callable=AsyncMock,
+            ) as mock_get_ship:
+                mock_get_ship.side_effect = [1500, 6300]
+
+                product_result = MagicMock()
+                product_result.scalar_one.return_value = mock_product
+                mock_session.execute.return_value = product_result
+
+                result = await calculate_velocity_trend_for_sku(mock_session, sku_id)
+
+                assert result.velocity_trend_dep is not None
+                assert result.velocity_trend_dep < 1.0  # Decelerating
+                assert abs(result.velocity_trend_dep - 0.75) < 0.01
+
+    @pytest.mark.asyncio
+    async def test_calculate_velocity_trend_zero_historical(self) -> None:
+        """Test velocity trend with zero historical data."""
+        mock_session = AsyncMock()
+        sku_id = uuid.uuid4()
+
+        mock_product = MagicMock()
+        mock_product.sku = "UFRed250"
+        mock_product.id = sku_id
+
+        with patch(
+            "src.services.metrics.get_depletion_total",
+            new_callable=AsyncMock,
+        ) as mock_get_dep:
+            # New SKU with no 90-day history
+            mock_get_dep.side_effect = [300, 0]
+
+            with patch(
+                "src.services.metrics.get_shipment_total",
+                new_callable=AsyncMock,
+            ) as mock_get_ship:
+                mock_get_ship.side_effect = [500, 0]
+
+                product_result = MagicMock()
+                product_result.scalar_one.return_value = mock_product
+                mock_session.execute.return_value = product_result
+
+                result = await calculate_velocity_trend_for_sku(mock_session, sku_id)
+
+                assert result.velocity_trend_dep is None  # Cannot calculate
+                assert result.velocity_trend_ship is None  # Cannot calculate
+
+    @pytest.mark.asyncio
+    async def test_calculate_velocity_trend_with_filters(self) -> None:
+        """Test velocity trend calculation with warehouse and distributor filters."""
+        mock_session = AsyncMock()
+        sku_id = uuid.uuid4()
+        warehouse_id = uuid.uuid4()
+        distributor_id = uuid.uuid4()
+
+        mock_product = MagicMock()
+        mock_product.sku = "UFCha250"
+        mock_product.id = sku_id
+
+        with patch(
+            "src.services.metrics.get_depletion_total",
+            new_callable=AsyncMock,
+        ) as mock_get_dep:
+            mock_get_dep.side_effect = [600, 1800]
+
+            with patch(
+                "src.services.metrics.get_shipment_total",
+                new_callable=AsyncMock,
+            ) as mock_get_ship:
+                mock_get_ship.side_effect = [450, 1350]
+
+                product_result = MagicMock()
+                product_result.scalar_one.return_value = mock_product
+                mock_session.execute.return_value = product_result
+
+                result = await calculate_velocity_trend_for_sku(
+                    mock_session,
+                    sku_id,
+                    warehouse_id=warehouse_id,
+                    distributor_id=distributor_id,
+                )
+
+                assert result.sku == "UFCha250"
+
+                # Verify filters were passed to get_depletion_total
+                assert mock_get_dep.call_count == 2
+                call_args = mock_get_dep.call_args_list[0]
+                assert call_args.kwargs["warehouse_id"] == warehouse_id
+                assert call_args.kwargs["distributor_id"] == distributor_id
+
+
+class TestCalculateVelocityTrendAllSkus:
+    """Tests for the calculate_velocity_trend_all_skus function."""
+
+    @pytest.mark.asyncio
+    async def test_calculate_velocity_trend_all_skus(self) -> None:
+        """Test calculating velocity trends for all SKUs."""
+        mock_session = AsyncMock()
+
+        # Create mock products
+        products = []
+        for sku in ["UFBub250", "UFRos250", "UFRed250", "UFCha250"]:
+            mock_product = MagicMock()
+            mock_product.sku = sku
+            mock_product.id = uuid.uuid4()
+            products.append(mock_product)
+
+        # Mock the products query
+        products_result = MagicMock()
+        products_result.scalars.return_value.all.return_value = products
+        mock_session.execute.return_value = products_result
+
+        # Mock calculate_velocity_trend_for_sku
+        with patch(
+            "src.services.metrics.calculate_velocity_trend_for_sku",
+            new_callable=AsyncMock,
+        ) as mock_calc:
+            mock_calc.side_effect = [
+                VelocityTrendMetrics(
+                    sku=p.sku,
+                    sku_id=p.id,
+                    depletion_30d=3000,
+                    depletion_90d=7200,
+                    daily_rate_30d_dep=100.0,
+                    daily_rate_90d_dep=80.0,
+                    velocity_trend_dep=1.25,
+                    shipment_30d=2700,
+                    shipment_90d=6300,
+                    daily_rate_30d_ship=90.0,
+                    daily_rate_90d_ship=70.0,
+                    velocity_trend_ship=1.286,
+                    calculated_at=datetime.now(UTC),
+                )
+                for p in products
+            ]
+
+            result = await calculate_velocity_trend_all_skus(mock_session)
+
+            assert len(result) == 4
+            assert all(isinstance(m, VelocityTrendMetrics) for m in result)
+            skus = [m.sku for m in result]
+            assert "UFBub250" in skus
+            assert "UFRos250" in skus
+            assert "UFRed250" in skus
+            assert "UFCha250" in skus
+
+    @pytest.mark.asyncio
+    async def test_calculate_velocity_trend_all_skus_empty(self) -> None:
+        """Test calculating velocity trends when no products exist."""
+        mock_session = AsyncMock()
+
+        products_result = MagicMock()
+        products_result.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value = products_result
+
+        result = await calculate_velocity_trend_all_skus(mock_session)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_calculate_velocity_trend_all_skus_with_filters(self) -> None:
+        """Test calculating velocity trends with filters."""
+        mock_session = AsyncMock()
+        warehouse_id = uuid.uuid4()
+        distributor_id = uuid.uuid4()
+
+        # Create mock products
+        products = []
+        for sku in ["UFBub250", "UFRos250"]:
+            mock_product = MagicMock()
+            mock_product.sku = sku
+            mock_product.id = uuid.uuid4()
+            products.append(mock_product)
+
+        # Mock the products query
+        products_result = MagicMock()
+        products_result.scalars.return_value.all.return_value = products
+        mock_session.execute.return_value = products_result
+
+        # Mock calculate_velocity_trend_for_sku
+        with patch(
+            "src.services.metrics.calculate_velocity_trend_for_sku",
+            new_callable=AsyncMock,
+        ) as mock_calc:
+            mock_calc.side_effect = [
+                VelocityTrendMetrics(
+                    sku=p.sku,
+                    sku_id=p.id,
+                    depletion_30d=3000,
+                    depletion_90d=7200,
+                    daily_rate_30d_dep=100.0,
+                    daily_rate_90d_dep=80.0,
+                    velocity_trend_dep=1.25,
+                    shipment_30d=2700,
+                    shipment_90d=6300,
+                    daily_rate_30d_ship=90.0,
+                    daily_rate_90d_ship=70.0,
+                    velocity_trend_ship=1.286,
+                    calculated_at=datetime.now(UTC),
+                )
+                for p in products
+            ]
+
+            result = await calculate_velocity_trend_all_skus(
                 mock_session,
                 warehouse_id=warehouse_id,
                 distributor_id=distributor_id,

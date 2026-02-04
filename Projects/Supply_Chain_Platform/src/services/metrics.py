@@ -5,7 +5,8 @@ This module provides functions for calculating key inventory metrics:
 - DOH_T90: Days on Hand based on trailing 90-day depletion rate
 - A30_Ship:A30_Dep: Ratio of 30-day shipments to 30-day depletions
 - A90_Ship:A90_Dep: Ratio of 90-day shipments to 90-day depletions
-- Velocity trend ratios
+- A30:A90_Dep: Velocity trend ratio for depletions (demand acceleration/deceleration)
+- A30:A90_Ship: Velocity trend ratio for shipments (supply acceleration/deceleration)
 """
 
 from dataclasses import dataclass
@@ -47,6 +48,48 @@ class DOHMetrics:
     doh_t90: MetricValue
     depletion_90d: int
     daily_rate_90d: MetricValue
+    calculated_at: datetime
+
+
+@dataclass(frozen=True)
+class VelocityTrendMetrics:
+    """Velocity trend metrics for a SKU.
+
+    These ratios compare short-term (30-day) velocity to long-term (90-day) velocity
+    to identify acceleration or deceleration in demand/supply.
+
+    Interpretation:
+    - > 1.0: Accelerating (recent activity higher than historical average)
+    - = 1.0: Stable (no change in velocity)
+    - < 1.0: Decelerating (recent activity lower than historical average)
+
+    Attributes:
+        sku: The SKU code
+        sku_id: The SKU UUID
+        depletion_30d: Total depletions in last 30 days
+        depletion_90d: Total depletions in last 90 days
+        daily_rate_30d_dep: Daily depletion rate (depletion_30d / 30)
+        daily_rate_90d_dep: Daily depletion rate (depletion_90d / 90)
+        velocity_trend_dep: A30:A90_Dep ratio (daily_rate_30d / daily_rate_90d)
+        shipment_30d: Total shipments in last 30 days
+        shipment_90d: Total shipments in last 90 days
+        daily_rate_30d_ship: Daily shipment rate (shipment_30d / 30)
+        daily_rate_90d_ship: Daily shipment rate (shipment_90d / 90)
+        velocity_trend_ship: A30:A90_Ship ratio (daily_rate_30d / daily_rate_90d)
+        calculated_at: Timestamp when metrics were calculated
+    """
+    sku: str
+    sku_id: UUID
+    depletion_30d: int
+    depletion_90d: int
+    daily_rate_30d_dep: MetricValue
+    daily_rate_90d_dep: MetricValue
+    velocity_trend_dep: MetricValue
+    shipment_30d: int
+    shipment_90d: int
+    daily_rate_30d_ship: MetricValue
+    daily_rate_90d_ship: MetricValue
+    velocity_trend_ship: MetricValue
     calculated_at: datetime
 
 
@@ -639,3 +682,196 @@ async def calculate_doh_t90_all_skus(
         List of DOHMetrics for each SKU (includes both T30 and T90)
     """
     return await calculate_doh_t30_all_skus(session, warehouse_id, as_of)
+
+
+def calculate_velocity_trend(
+    rate_30d: float,
+    rate_90d: float,
+) -> MetricValue:
+    """Calculate velocity trend ratio (A30:A90).
+
+    Formula: A30:A90 = rate_30d / rate_90d
+
+    This ratio compares short-term (30-day) velocity to long-term (90-day)
+    velocity to identify acceleration or deceleration.
+
+    Interpretation:
+    - > 1.0: Accelerating (recent rate higher than historical average)
+    - = 1.0: Stable (no change in velocity)
+    - < 1.0: Decelerating (recent rate lower than historical average)
+
+    Args:
+        rate_30d: Daily rate for the last 30 days
+        rate_90d: Daily rate for the last 90 days
+
+    Returns:
+        Velocity trend ratio, or None if rate_90d is zero
+        (cannot calculate trend without historical baseline)
+
+    Examples:
+        >>> calculate_velocity_trend(100.0, 80.0)  # 100/day recent vs 80/day historical
+        1.25  # Accelerating - 25% faster than historical
+
+        >>> calculate_velocity_trend(60.0, 80.0)  # 60/day recent vs 80/day historical
+        0.75  # Decelerating - 25% slower than historical
+
+        >>> calculate_velocity_trend(80.0, 80.0)  # Same rate
+        1.0  # Stable
+
+        >>> calculate_velocity_trend(100.0, 0.0)  # No historical data
+        None  # Cannot calculate
+    """
+    if rate_90d <= 0:
+        # Cannot calculate trend without historical baseline
+        return None
+
+    return rate_30d / rate_90d
+
+
+def calculate_velocity_trend_from_totals(
+    total_30d: int,
+    total_90d: int,
+) -> MetricValue:
+    """Calculate velocity trend ratio from totals.
+
+    Formula: A30:A90 = (total_30d / 30) / (total_90d / 90)
+
+    This is a convenience function that converts totals to daily rates
+    before calculating the velocity trend.
+
+    Args:
+        total_30d: Total quantity for the last 30 days
+        total_90d: Total quantity for the last 90 days
+
+    Returns:
+        Velocity trend ratio, or None if total_90d is zero
+
+    Examples:
+        >>> calculate_velocity_trend_from_totals(3000, 7200)
+        # rate_30d = 3000/30 = 100, rate_90d = 7200/90 = 80
+        1.25  # Accelerating
+
+        >>> calculate_velocity_trend_from_totals(1800, 7200)
+        # rate_30d = 1800/30 = 60, rate_90d = 7200/90 = 80
+        0.75  # Decelerating
+    """
+    if total_90d <= 0:
+        return None
+
+    rate_30d = total_30d / 30.0
+    rate_90d = total_90d / 90.0
+
+    return calculate_velocity_trend(rate_30d, rate_90d)
+
+
+async def calculate_velocity_trend_for_sku(
+    session: AsyncSession,
+    sku_id: UUID,
+    warehouse_id: UUID | None = None,
+    distributor_id: UUID | None = None,
+    as_of: datetime | None = None,
+) -> VelocityTrendMetrics:
+    """Calculate velocity trend metrics for a specific SKU.
+
+    This calculates both depletion (demand) and shipment (supply) velocity trends
+    to identify whether demand/supply is accelerating or decelerating.
+
+    Args:
+        session: Database session
+        sku_id: Product SKU UUID
+        warehouse_id: Optional warehouse filter
+        distributor_id: Optional distributor filter
+        as_of: Calculate as of this time (default: now)
+
+    Returns:
+        VelocityTrendMetrics with calculated velocity trends for both
+        depletions and shipments
+    """
+    if as_of is None:
+        as_of = datetime.now(UTC)
+
+    # Get product info
+    product_query = select(Product).where(Product.id == sku_id)
+    result = await session.execute(product_query)
+    product = result.scalar_one()
+
+    # Get depletion totals
+    depletion_30d = await get_depletion_total(
+        session, sku_id, days=30,
+        warehouse_id=warehouse_id, distributor_id=distributor_id, as_of=as_of
+    )
+    depletion_90d = await get_depletion_total(
+        session, sku_id, days=90,
+        warehouse_id=warehouse_id, distributor_id=distributor_id, as_of=as_of
+    )
+
+    # Get shipment totals
+    shipment_30d = await get_shipment_total(
+        session, sku_id, days=30,
+        warehouse_id=warehouse_id, distributor_id=distributor_id, as_of=as_of
+    )
+    shipment_90d = await get_shipment_total(
+        session, sku_id, days=90,
+        warehouse_id=warehouse_id, distributor_id=distributor_id, as_of=as_of
+    )
+
+    # Calculate daily rates
+    daily_rate_30d_dep = calculate_daily_depletion_rate(depletion_30d, 30)
+    daily_rate_90d_dep = calculate_daily_depletion_rate(depletion_90d, 90)
+    daily_rate_30d_ship = calculate_daily_depletion_rate(shipment_30d, 30)
+    daily_rate_90d_ship = calculate_daily_depletion_rate(shipment_90d, 90)
+
+    # Calculate velocity trends
+    velocity_trend_dep = calculate_velocity_trend_from_totals(depletion_30d, depletion_90d)
+    velocity_trend_ship = calculate_velocity_trend_from_totals(shipment_30d, shipment_90d)
+
+    return VelocityTrendMetrics(
+        sku=product.sku,
+        sku_id=sku_id,
+        depletion_30d=depletion_30d,
+        depletion_90d=depletion_90d,
+        daily_rate_30d_dep=daily_rate_30d_dep,
+        daily_rate_90d_dep=daily_rate_90d_dep,
+        velocity_trend_dep=velocity_trend_dep,
+        shipment_30d=shipment_30d,
+        shipment_90d=shipment_90d,
+        daily_rate_30d_ship=daily_rate_30d_ship,
+        daily_rate_90d_ship=daily_rate_90d_ship,
+        velocity_trend_ship=velocity_trend_ship,
+        calculated_at=as_of,
+    )
+
+
+async def calculate_velocity_trend_all_skus(
+    session: AsyncSession,
+    warehouse_id: UUID | None = None,
+    distributor_id: UUID | None = None,
+    as_of: datetime | None = None,
+) -> list[VelocityTrendMetrics]:
+    """Calculate velocity trend metrics for all tracked SKUs.
+
+    Args:
+        session: Database session
+        warehouse_id: Optional warehouse filter
+        distributor_id: Optional distributor filter
+        as_of: Calculate as of this time (default: now)
+
+    Returns:
+        List of VelocityTrendMetrics for each SKU
+    """
+    if as_of is None:
+        as_of = datetime.now(UTC)
+
+    # Get all products
+    products_query = select(Product).order_by(Product.sku)
+    result = await session.execute(products_query)
+    products = result.scalars().all()
+
+    metrics = []
+    for product in products:
+        sku_metrics = await calculate_velocity_trend_for_sku(
+            session, product.id, warehouse_id, distributor_id, as_of
+        )
+        metrics.append(sku_metrics)
+
+    return metrics
