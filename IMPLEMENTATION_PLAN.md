@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 12
+- Completed: 13
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -82,9 +82,11 @@
   - Notes: Created Celery app (src/celery_app.py) with Redis broker and beat schedule for daily sync at 6 AM UTC. Implemented sync_winedirect_inventory task (src/tasks/winedirect_sync.py) that: 1) Fetches sellable inventory positions and creates snapshot events, 2) Fetches depletion events from last 24 hours and creates depletion events. Task has automatic retry (3 retries, 5 min delay) on API errors. Creates/uses WINEDIRECT warehouse. 17 tests covering sync functions, helper functions, and Celery task execution.
 
 ### Priority 1.4: Distributor File Processing
-- [ ] **Task 1.4.1**: Create file upload API endpoint
+- [x] **Task 1.4.1**: Create file upload API endpoint
   - Spec: specs/03-distributor-data-processing.md
   - Acceptance: POST /upload accepts multipart/form-data CSV and Excel
+  - Completed: 2026-02-03
+  - Notes: Created POST /upload endpoint in src/api/upload.py accepting multipart/form-data with CSV and Excel files (.csv, .xlsx, .xls). Features include: file extension validation, content type validation, file size limit (10MB), empty file detection, optional distributor parameter (RNDC, Southern Glazers, Winebow). Returns ProcessingResult with filename, distributor, success/error counts, and validation errors. Actual file parsing will be implemented in tasks 1.4.2-1.4.5. 28 tests covering validation functions and endpoint behavior.
 
 - [ ] **Task 1.4.2**: Implement RNDC report parser
   - Spec: specs/03-distributor-data-processing.md

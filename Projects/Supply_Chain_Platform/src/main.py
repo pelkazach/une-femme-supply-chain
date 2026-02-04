@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from src.api.inventory import router as inventory_router
+from src.api.upload import router as upload_router
 from src.config import settings
 
 app = FastAPI(
@@ -14,6 +15,7 @@ app = FastAPI(
 
 # Include API routers
 app.include_router(inventory_router)
+app.include_router(upload_router)
 
 
 @app.get("/health")
