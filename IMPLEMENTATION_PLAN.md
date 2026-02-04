@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 21
+- Completed: 22
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -144,9 +144,11 @@
   - Notes: Created src/api/metrics.py with GET /metrics (all SKUs) and GET /metrics/{sku} (single SKU) endpoints. Features include: DOH_T30/T90, shipment:depletion ratios, and velocity trends. Supports filtering by warehouse_id, warehouse_code, distributor_id, and distributor_name. Returns combined SKUMetrics with all three metric categories. 12 tests covering success, filtering, 404 errors, and edge cases (None values for zero depletions).
 
 ### Priority 1.6: Dashboard & Alerting
-- [ ] **Task 1.6.1**: Deploy Redash on Railway
+- [x] **Task 1.6.1**: Deploy Redash on Railway
   - Spec: specs/06-dashboard-alerting.md
   - Acceptance: Redash accessible via web URL
+  - Completed: 2026-02-03
+  - Notes: Created separate Railway project "une-femme-redash" (b8f5ae7c-d682-46e8-9beb-5ef77a657d15) with Redash template. Services deployed: Redash-Server (web UI on redash/redash:latest image), Scheduled Worker (query scheduling), ADHOC Worker (query execution), Postgres (database), KeyDB (Redis cache). Ran database migrations via `railway ssh "./manage.py database create_tables"`. Redash accessible at https://redash-server-production-920f.up.railway.app (initial setup page).
 
 - [ ] **Task 1.6.2**: Connect Redash to PostgreSQL database
   - Spec: specs/06-dashboard-alerting.md
