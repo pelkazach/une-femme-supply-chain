@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 32
+- Completed: 33
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -226,9 +226,11 @@
   - Completed: 2026-02-03
   - Notes: Created src/services/gmail.py with GmailClient class implementing OAuth 2.0 authentication. Features include: interactive OAuth flow via InstalledAppFlow, token persistence (save/load from JSON file), automatic token refresh with RefreshError handling, Gmail API methods (list_messages, get_message, get_attachment, get_labels, get_profile), EmailMessage and EmailAttachment dataclasses for parsed responses. Added Gmail settings to config.py (gmail_credentials_file, gmail_token_file, gmail_scopes). Added google-auth, google-auth-oauthlib, and google-api-python-client dependencies. 26 tests covering auth, token management, API calls, and error handling.
 
-- [ ] **Task 2.2.2**: Create email classification prompt with Ollama
+- [x] **Task 2.2.2**: Create email classification prompt with Ollama
   - Spec: specs/07-email-classification.md
   - Acceptance: Classifies PO/BOL/Invoice/General with >94% accuracy
+  - Completed: 2026-02-03
+  - Notes: Created src/services/email_classifier.py with OllamaClient class and classify_email() async function. Features include: structured CLASSIFICATION_PROMPT with category-specific keywords, JSON response parsing with multiple format handling (direct, code blocks, embedded), validate_classification() with category normalization and confidence clamping, needs_review flag for confidence <85%, rule_based_classify() fallback when Ollama unavailable, classify_email_with_fallback() with retry logic. Added Ollama settings to config.py (ollama_base_url, ollama_model, ollama_timeout). 62 tests covering OllamaClient, parsing, validation, classification, fallback, and accuracy requirements.
 
 - [ ] **Task 2.2.3**: Build email processing queue with Celery
   - Spec: specs/07-email-classification.md

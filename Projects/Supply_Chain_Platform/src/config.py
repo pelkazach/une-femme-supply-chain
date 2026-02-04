@@ -38,6 +38,11 @@ class Settings(BaseSettings):
         "https://www.googleapis.com/auth/gmail.labels",
     ]
 
+    # Ollama (local LLM)
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "mixtral"
+    ollama_timeout: int = 60  # seconds
+
     # Application
     debug: bool = False
     api_host: str = "0.0.0.0"
