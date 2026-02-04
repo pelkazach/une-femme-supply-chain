@@ -1,0 +1,52 @@
+# Une Femme Supply Chain - Dependencies
+# Generated from pyproject.toml
+
+# FastAPI and web
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+python-multipart>=0.0.20
+
+# Database
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.30.0
+psycopg2-binary>=2.9.0
+alembic>=1.14.0
+
+# Task queue
+celery[redis]>=5.4.0
+redis>=5.2.0
+
+# Forecasting
+prophet>=1.1.0
+pandas>=2.2.0
+numpy>=2.0.0
+
+# Excel file support
+openpyxl>=3.1.0
+
+# HTTP client
+httpx>=0.28.0
+
+# LangGraph agents
+langgraph>=0.2.0
+langgraph-checkpoint-postgres>=2.0.0
+langchain>=0.3.0
+langchain-openai>=0.3.0
+
+# Azure Document Intelligence
+azure-ai-documentintelligence>=1.0.0
+
+# Configuration
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+python-dotenv>=1.0.0
+greenlet>=3.3.1
+
+# Google integrations
+google-auth>=2.48.0
+google-auth-oauthlib>=1.2.4
+google-api-python-client>=2.189.0
+
+# QuickBooks Online
+python-quickbooks>=0.9.0
+intuit-oauth>=1.2.6
