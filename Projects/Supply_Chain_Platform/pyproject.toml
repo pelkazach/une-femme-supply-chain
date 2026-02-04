@@ -3,7 +3,7 @@ name = "une-femme-supply-chain"
 version = "0.1.0"
 description = "Une Femme Wine Supply Chain Intelligence Platform"
 authors = ["Une Femme Team"]
-packages = [{include = "src"}]
+# packages = [{include = "src"}]  # Disabled for Railway nixpacks build
 
 [tool.poetry.dependencies]
 python = "^3.11"
