@@ -1,0 +1,235 @@
+# Implementation Plan
+
+## Status
+- Total tasks: 42
+- Completed: 1
+- In progress: 0
+
+## Phase 1: Foundation (P0 - MVP)
+
+### Priority 1.1: Project Setup
+- [x] **Task 1.1.1**: Initialize Python project with pyproject.toml and dependencies
+  - Spec: N/A (standard setup)
+  - Acceptance: `poetry install` succeeds, project structure created
+  - Completed: 2026-02-03
+
+- [ ] **Task 1.1.2**: Create Railway project and add PostgreSQL database
+  - Spec: specs/01-database-schema.md
+  - Acceptance: Railway project exists with PostgreSQL service running
+
+- [ ] **Task 1.1.3**: Configure Alembic for database migrations
+  - Spec: specs/01-database-schema.md
+  - Acceptance: `alembic init` complete, config connected to Railway database
+
+### Priority 1.2: Database Schema
+- [ ] **Task 1.2.1**: Create SQLAlchemy models for products, warehouses, distributors
+  - Spec: specs/01-database-schema.md
+  - Acceptance: Models defined with proper relationships and constraints
+
+- [ ] **Task 1.2.2**: Create inventory_events table as TimescaleDB hypertable
+  - Spec: specs/01-database-schema.md
+  - Acceptance: Hypertable created with time-based partitioning
+
+- [ ] **Task 1.2.3**: Write migration to seed 4 product SKUs
+  - Spec: specs/01-database-schema.md
+  - Acceptance: UFBub250, UFRos250, UFRed250, UFCha250 exist in products table
+
+- [ ] **Task 1.2.4**: Create continuous aggregates for DOH_T30 and DOH_T90
+  - Spec: specs/04-inventory-metrics.md
+  - Acceptance: Aggregates refresh automatically, query returns expected values
+
+### Priority 1.3: WineDirect Integration
+- [ ] **Task 1.3.1**: Create WineDirect API client with Bearer Token auth
+  - Spec: specs/02-winedirect-integration.md
+  - Acceptance: Client authenticates successfully, token stored securely
+
+- [ ] **Task 1.3.2**: Implement GET /inventory/sellable endpoint
+  - Spec: specs/02-winedirect-integration.md
+  - Acceptance: Returns inventory positions for all 4 SKUs
+
+- [ ] **Task 1.3.3**: Implement GET /inventory-out endpoint for depletions
+  - Spec: specs/02-winedirect-integration.md
+  - Acceptance: Returns depletion events with timestamps
+
+- [ ] **Task 1.3.4**: Implement velocity report parsing (30/60/90 day)
+  - Spec: specs/02-winedirect-integration.md
+  - Acceptance: Depletion rates extracted correctly
+
+- [ ] **Task 1.3.5**: Create daily sync job with Celery
+  - Spec: specs/02-winedirect-integration.md
+  - Acceptance: Job runs daily, inserts data into inventory_events
+
+### Priority 1.4: Distributor File Processing
+- [ ] **Task 1.4.1**: Create file upload API endpoint
+  - Spec: specs/03-distributor-data-processing.md
+  - Acceptance: POST /upload accepts multipart/form-data CSV and Excel
+
+- [ ] **Task 1.4.2**: Implement RNDC report parser
+  - Spec: specs/03-distributor-data-processing.md
+  - Acceptance: Parses Date, Invoice, Account, SKU, Qty Sold fields
+
+- [ ] **Task 1.4.3**: Implement Southern Glazers report parser
+  - Spec: specs/03-distributor-data-processing.md
+  - Acceptance: Parses Ship Date, Customer, Item Code, Cases, Bottles fields
+
+- [ ] **Task 1.4.4**: Implement Winebow report parser
+  - Spec: specs/03-distributor-data-processing.md
+  - Acceptance: Parses transaction_date, product_code, quantity fields
+
+- [ ] **Task 1.4.5**: Create SKU validation and error reporting
+  - Spec: specs/03-distributor-data-processing.md
+  - Acceptance: Invalid SKUs flagged with error message, valid rows processed
+
+### Priority 1.5: Inventory Metrics
+- [ ] **Task 1.5.1**: Implement DOH_T30 calculation function
+  - Spec: specs/04-inventory-metrics.md
+  - Acceptance: Matches Excel formula within 1% variance
+
+- [ ] **Task 1.5.2**: Implement DOH_T90 calculation function
+  - Spec: specs/04-inventory-metrics.md
+  - Acceptance: Matches Excel formula within 1% variance
+
+- [ ] **Task 1.5.3**: Implement A30_Ship:A30_Dep ratio calculation
+  - Spec: specs/04-inventory-metrics.md
+  - Acceptance: Ratio calculated correctly for 30-day window
+
+- [ ] **Task 1.5.4**: Implement velocity trend ratios (A30:A90_Dep)
+  - Spec: specs/04-inventory-metrics.md
+  - Acceptance: >1 indicates acceleration, <1 indicates deceleration
+
+- [ ] **Task 1.5.5**: Create metrics API endpoint
+  - Spec: specs/04-inventory-metrics.md
+  - Acceptance: GET /metrics returns all metrics, supports SKU filter
+
+### Priority 1.6: Dashboard & Alerting
+- [ ] **Task 1.6.1**: Deploy Redash on Railway
+  - Spec: specs/06-dashboard-alerting.md
+  - Acceptance: Redash accessible via web URL
+
+- [ ] **Task 1.6.2**: Connect Redash to PostgreSQL database
+  - Spec: specs/06-dashboard-alerting.md
+  - Acceptance: Data source configured, test query succeeds
+
+- [ ] **Task 1.6.3**: Create DOH overview dashboard query
+  - Spec: specs/06-dashboard-alerting.md
+  - Acceptance: Shows DOH_T30, DOH_T90 for all 4 SKUs
+
+- [ ] **Task 1.6.4**: Create shipment:depletion ratio visualization
+  - Spec: specs/06-dashboard-alerting.md
+  - Acceptance: Chart shows ratios with color coding
+
+- [ ] **Task 1.6.5**: Configure stock-out risk alert (DOH_T30 < 14)
+  - Spec: specs/06-dashboard-alerting.md
+  - Acceptance: Alert fires when threshold breached
+
+- [ ] **Task 1.6.6**: Configure Slack notification for alerts
+  - Spec: specs/06-dashboard-alerting.md
+  - Acceptance: Slack message sent when alert fires
+
+- [ ] **Task 1.6.7**: Configure email notification for alerts
+  - Spec: specs/06-dashboard-alerting.md
+  - Acceptance: Email sent when alert fires
+
+## Phase 2: Automation (P1)
+
+### Priority 2.1: Demand Forecasting
+- [ ] **Task 2.1.1**: Create Prophet model training function
+  - Spec: specs/05-demand-forecasting.md
+  - Acceptance: Model trains on 2+ years data with multiplicative seasonality
+
+- [ ] **Task 2.1.2**: Define holiday calendar (NYE, Valentine's, etc.)
+  - Spec: specs/05-demand-forecasting.md
+  - Acceptance: Holiday effects included with 7-day lower window
+
+- [ ] **Task 2.1.3**: Implement 26-week forecast generation
+  - Spec: specs/05-demand-forecasting.md
+  - Acceptance: Returns weekly predictions with 80%/95% intervals
+
+- [ ] **Task 2.1.4**: Create weekly retraining Celery job
+  - Spec: specs/05-demand-forecasting.md
+  - Acceptance: Job runs Mondays, updates forecasts table
+
+- [ ] **Task 2.1.5**: Add forecast visualization to Redash
+  - Spec: specs/05-demand-forecasting.md
+  - Acceptance: Chart shows forecast with confidence bands
+
+### Priority 2.2: Email Classification
+- [ ] **Task 2.2.1**: Implement Gmail API OAuth connection
+  - Spec: specs/07-email-classification.md
+  - Acceptance: OAuth flow completes, token stored
+
+- [ ] **Task 2.2.2**: Create email classification prompt with Ollama
+  - Spec: specs/07-email-classification.md
+  - Acceptance: Classifies PO/BOL/Invoice/General with >94% accuracy
+
+- [ ] **Task 2.2.3**: Build email processing queue with Celery
+  - Spec: specs/07-email-classification.md
+  - Acceptance: Emails classified within 15 seconds
+
+- [ ] **Task 2.2.4**: Create human review queue endpoint
+  - Spec: specs/07-email-classification.md
+  - Acceptance: Low-confidence classifications (<85%) flagged
+
+### Priority 2.3: Document OCR
+- [ ] **Task 2.3.1**: Integrate Azure Document Intelligence SDK
+  - Spec: specs/08-document-ocr.md
+  - Acceptance: Client authenticated, test document processed
+
+- [ ] **Task 2.3.2**: Create PO extraction schema and processor
+  - Spec: specs/08-document-ocr.md
+  - Acceptance: Extracts PO#, vendor, items, quantities with >93% accuracy
+
+- [ ] **Task 2.3.3**: Create BOL extraction schema and processor
+  - Spec: specs/08-document-ocr.md
+  - Acceptance: Extracts shipper, consignee, tracking, cargo
+
+- [ ] **Task 2.3.4**: Create Invoice extraction using prebuilt model
+  - Spec: specs/08-document-ocr.md
+  - Acceptance: Extracts invoice#, amounts, line items
+
+## Phase 3: Intelligence (P2)
+
+### Priority 3.1: Agentic Automation
+- [ ] **Task 3.1.1**: Create LangGraph state machine scaffold
+  - Spec: specs/09-agentic-automation.md
+  - Acceptance: Basic graph compiles and runs
+
+- [ ] **Task 3.1.2**: Implement demand forecaster agent node
+  - Spec: specs/09-agentic-automation.md
+  - Acceptance: Node calls Prophet and returns forecast
+
+- [ ] **Task 3.1.3**: Implement inventory optimizer agent node
+  - Spec: specs/09-agentic-automation.md
+  - Acceptance: Calculates safety stock and reorder quantity
+
+- [ ] **Task 3.1.4**: Implement human approval interrupt node
+  - Spec: specs/09-agentic-automation.md
+  - Acceptance: Workflow pauses for orders >$10K
+
+- [ ] **Task 3.1.5**: Create audit trail logging
+  - Spec: specs/09-agentic-automation.md
+  - Acceptance: All agent decisions logged with reasoning
+
+### Priority 3.2: QuickBooks Integration
+- [ ] **Task 3.2.1**: Implement QuickBooks OAuth 2.0 flow
+  - Spec: specs/10-quickbooks-integration.md
+  - Acceptance: OAuth completes, tokens stored
+
+- [ ] **Task 3.2.2**: Create inventory sync function
+  - Spec: specs/10-quickbooks-integration.md
+  - Acceptance: Inventory levels match between systems (±1%)
+
+- [ ] **Task 3.2.3**: Implement invoice pull from QuickBooks
+  - Spec: specs/10-quickbooks-integration.md
+  - Acceptance: Invoices retrieved and stored locally
+
+## Discoveries
+
+_Updated by Ralph during execution - document any findings, blockers, or spec corrections here._
+
+- **2026-02-03**: Python 3.13 is available on the system. Poetry installed and project uses Python ^3.11 for compatibility with Prophet and other dependencies. All dependencies install successfully including FastAPI, SQLAlchemy, Celery, Prophet, LangGraph, and Azure Document Intelligence SDK.
+
+---
+
+## Revision History
+- 2026-02-03: Initial plan created from PRD.md
