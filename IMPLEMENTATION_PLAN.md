@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 9
+- Completed: 10
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -63,9 +63,11 @@
   - Completed: 2026-02-03
   - Notes: Created FastAPI endpoint GET /inventory/sellable that fetches inventory from WineDirect API and filters to tracked SKUs. Also added GET /inventory/sellable/{sku} for single SKU lookup. Created src/main.py FastAPI application entry point. 11 tests covering success, auth errors, API errors, and alternative field names.
 
-- [ ] **Task 1.3.3**: Implement GET /inventory-out endpoint for depletions
+- [x] **Task 1.3.3**: Implement GET /inventory-out endpoint for depletions
   - Spec: specs/02-winedirect-integration.md
   - Acceptance: Returns depletion events with timestamps
+  - Completed: 2026-02-03
+  - Notes: Created GET /inventory/out endpoint that fetches depletion events from WineDirect API. Features include: date range filtering via start_date/end_date query params (defaults to last 24 hours), filtering to tracked SKUs only, handling of multiple timestamp field formats (timestamp, date, event_date, transaction_date) and SKU field names (sku, item_code, product_code). Response includes DepletionEvent schema with sku, quantity, timestamp, order_id, customer, and warehouse. 8 new tests covering success, date range, auth errors, API errors, empty results, alternative field names, datetime objects, and Z-suffix timestamps.
 
 - [ ] **Task 1.3.4**: Implement velocity report parsing (30/60/90 day)
   - Spec: specs/02-winedirect-integration.md

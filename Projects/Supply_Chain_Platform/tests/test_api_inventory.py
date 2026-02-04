@@ -1,6 +1,7 @@
 """Tests for inventory API endpoints."""
 
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -410,5 +411,373 @@ class TestInventoryItemAltFields:
                 data = response.json()
                 assert data["total_items"] == 1
                 assert data["items"][0]["sku"] == "UFBub250"
+        finally:
+            app.dependency_overrides.clear()
+
+
+class TestGetInventoryOut:
+    """Tests for GET /inventory/out endpoint."""
+
+    def test_get_inventory_out_success(self) -> None:
+        """Test successful retrieval of depletion events."""
+        now = datetime.now(UTC)
+        mock_winedirect_events = [
+            {
+                "sku": "UFBub250",
+                "quantity": 10,
+                "timestamp": now.isoformat(),
+                "order_id": "ORD-001",
+                "customer": "Test Customer",
+                "warehouse": "WH1",
+            },
+            {
+                "sku": "UFRos250",
+                "quantity": 5,
+                "timestamp": (now - timedelta(hours=1)).isoformat(),
+                "order_id": "ORD-002",
+                "customer": "Another Customer",
+                "warehouse": "WH1",
+            },
+            {
+                "sku": "OTHER_SKU",
+                "quantity": 100,
+                "timestamp": now.isoformat(),
+                "order_id": "ORD-003",
+            },
+        ]
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [
+            ("UFBub250",),
+            ("UFRos250",),
+            ("UFRed250",),
+            ("UFCha250",),
+        ]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_inventory_out.return_value = mock_winedirect_events
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/out")
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert "events" in data
+                assert "total_events" in data
+                assert "start_date" in data
+                assert "end_date" in data
+                # Should only include tracked SKUs (2 events, not OTHER_SKU)
+                assert data["total_events"] == 2
+                skus = [event["sku"] for event in data["events"]]
+                assert "UFBub250" in skus
+                assert "UFRos250" in skus
+                assert "OTHER_SKU" not in skus
+                # Verify event structure
+                event = data["events"][0]
+                assert "quantity" in event
+                assert "timestamp" in event
+                assert "order_id" in event
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_inventory_out_with_date_range(self) -> None:
+        """Test retrieval of depletion events with custom date range."""
+        now = datetime.now(UTC)
+        start = now - timedelta(days=7)
+        end = now
+
+        mock_winedirect_events = [
+            {
+                "sku": "UFBub250",
+                "quantity": 10,
+                "timestamp": (now - timedelta(days=3)).isoformat(),
+            },
+        ]
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_inventory_out.return_value = mock_winedirect_events
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get(
+                    "/inventory/out",
+                    params={
+                        "start_date": start.isoformat(),
+                        "end_date": end.isoformat(),
+                    },
+                )
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert data["total_events"] == 1
+
+                # Verify the client was called with the provided dates
+                call_args = mock_client.get_inventory_out.call_args
+                assert call_args is not None
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_inventory_out_auth_error(self) -> None:
+        """Test handling of WineDirect authentication error."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_inventory_out.side_effect = WineDirectAuthError(
+                    "Invalid credentials"
+                )
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/out")
+
+                assert response.status_code == status.HTTP_401_UNAUTHORIZED
+                assert "authentication failed" in response.json()["detail"].lower()
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_inventory_out_api_error(self) -> None:
+        """Test handling of WineDirect API error."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_inventory_out.side_effect = WineDirectAPIError(
+                    "Server error"
+                )
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/out")
+
+                assert response.status_code == status.HTTP_502_BAD_GATEWAY
+                assert "API error" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_inventory_out_empty(self) -> None:
+        """Test handling when no tracked SKUs are in depletion events."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                # WineDirect returns events but none match our tracked SKUs
+                mock_client.get_inventory_out.return_value = [
+                    {"sku": "OTHER_SKU", "quantity": 100, "timestamp": datetime.now(UTC).isoformat()},
+                ]
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/out")
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert data["total_events"] == 0
+                assert data["events"] == []
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_inventory_out_alternative_field_names(self) -> None:
+        """Test handling of alternative field names in depletion events."""
+        now = datetime.now(UTC)
+        mock_winedirect_events = [
+            {
+                "item_code": "UFBub250",
+                "quantity": 10,
+                "date": now.isoformat(),
+                "order_number": "ORD-001",
+                "customer_name": "Test Customer",
+                "location": "WH1",
+            },
+        ]
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_inventory_out.return_value = mock_winedirect_events
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/out")
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert data["total_events"] == 1
+                event = data["events"][0]
+                assert event["sku"] == "UFBub250"
+                assert event["order_id"] == "ORD-001"
+                assert event["customer"] == "Test Customer"
+                assert event["warehouse"] == "WH1"
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_inventory_out_datetime_object_in_response(self) -> None:
+        """Test handling when WineDirect returns datetime objects instead of strings."""
+        now = datetime.now(UTC)
+        mock_winedirect_events = [
+            {
+                "sku": "UFBub250",
+                "quantity": 10,
+                "timestamp": now,  # datetime object, not string
+            },
+        ]
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_inventory_out.return_value = mock_winedirect_events
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/out")
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert data["total_events"] == 1
+                assert "timestamp" in data["events"][0]
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_inventory_out_z_suffix_timestamp(self) -> None:
+        """Test handling of timestamps with Z suffix."""
+        mock_winedirect_events = [
+            {
+                "sku": "UFBub250",
+                "quantity": 10,
+                "timestamp": "2026-02-03T12:00:00Z",  # Z suffix for UTC
+            },
+        ]
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_inventory_out.return_value = mock_winedirect_events
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/out")
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert data["total_events"] == 1
         finally:
             app.dependency_overrides.clear()
