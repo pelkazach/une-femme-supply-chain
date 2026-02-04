@@ -9,6 +9,7 @@ from fastapi import status
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.inventory import parse_velocity_report, SkuVelocity
 from src.database import get_db
 from src.main import app
 from src.services.winedirect import WineDirectAPIError, WineDirectAuthError
@@ -779,5 +780,551 @@ class TestGetInventoryOut:
                 assert response.status_code == status.HTTP_200_OK
                 data = response.json()
                 assert data["total_events"] == 1
+        finally:
+            app.dependency_overrides.clear()
+
+
+class TestParseVelocityReport:
+    """Tests for parse_velocity_report function."""
+
+    def test_parse_velocity_report_with_skus_key(self) -> None:
+        """Test parsing velocity report with 'skus' key."""
+        raw_report = {
+            "period_days": 30,
+            "skus": [
+                {"sku": "UFBub250", "units_per_day": 5.2, "total_units": 156},
+                {"sku": "UFRos250", "units_per_day": 3.1, "total_units": 93},
+                {"sku": "OTHER_SKU", "units_per_day": 10.0, "total_units": 300},
+            ],
+        }
+        tracked_skus = {"UFBub250", "UFRos250", "UFRed250", "UFCha250"}
+
+        result = parse_velocity_report(raw_report, tracked_skus, period_days=30)
+
+        assert len(result) == 2
+        skus = {v.sku for v in result}
+        assert "UFBub250" in skus
+        assert "UFRos250" in skus
+        assert "OTHER_SKU" not in skus
+
+        # Find UFBub250 and verify values
+        bub = next(v for v in result if v.sku == "UFBub250")
+        assert bub.units_per_day == 5.2
+        assert bub.total_units == 156
+        assert bub.period_days == 30
+
+    def test_parse_velocity_report_with_data_key(self) -> None:
+        """Test parsing velocity report with 'data' key."""
+        raw_report = {
+            "data": [
+                {"sku": "UFBub250", "velocity": 4.5, "quantity": 135},
+            ],
+        }
+        tracked_skus = {"UFBub250"}
+
+        result = parse_velocity_report(raw_report, tracked_skus, period_days=30)
+
+        assert len(result) == 1
+        assert result[0].sku == "UFBub250"
+        assert result[0].units_per_day == 4.5
+        assert result[0].total_units == 135
+
+    def test_parse_velocity_report_as_list(self) -> None:
+        """Test parsing velocity report when response is a direct list."""
+        raw_report = [
+            {"sku": "UFBub250", "rate": 6.0, "total_quantity": 180},
+        ]
+        tracked_skus = {"UFBub250"}
+
+        result = parse_velocity_report(raw_report, tracked_skus, period_days=30)
+
+        assert len(result) == 1
+        assert result[0].units_per_day == 6.0
+        assert result[0].total_units == 180
+
+    def test_parse_velocity_report_alternative_sku_field(self) -> None:
+        """Test parsing with alternative SKU field names."""
+        raw_report = {
+            "skus": [
+                {"item_code": "UFBub250", "depletion_rate": 5.0, "units": 150},
+            ],
+        }
+        tracked_skus = {"UFBub250"}
+
+        result = parse_velocity_report(raw_report, tracked_skus, period_days=30)
+
+        assert len(result) == 1
+        assert result[0].sku == "UFBub250"
+        assert result[0].units_per_day == 5.0
+
+    def test_parse_velocity_report_calculates_rate_from_total(self) -> None:
+        """Test that units_per_day is calculated if only total_units provided."""
+        raw_report = {
+            "skus": [
+                {"sku": "UFBub250", "total_units": 150},  # No rate provided
+            ],
+        }
+        tracked_skus = {"UFBub250"}
+
+        result = parse_velocity_report(raw_report, tracked_skus, period_days=30)
+
+        assert len(result) == 1
+        assert result[0].units_per_day == 5.0  # 150 / 30 = 5.0
+
+    def test_parse_velocity_report_calculates_total_from_rate(self) -> None:
+        """Test that total_units is calculated if only units_per_day provided."""
+        raw_report = {
+            "skus": [
+                {"sku": "UFBub250", "units_per_day": 5.0},  # No total provided
+            ],
+        }
+        tracked_skus = {"UFBub250"}
+
+        result = parse_velocity_report(raw_report, tracked_skus, period_days=30)
+
+        assert len(result) == 1
+        assert result[0].total_units == 150  # 5.0 * 30 = 150
+
+    def test_parse_velocity_report_skips_sku_without_data(self) -> None:
+        """Test that SKUs without velocity data are skipped."""
+        raw_report = {
+            "skus": [
+                {"sku": "UFBub250"},  # No rate or total
+                {"sku": "UFRos250", "units_per_day": 3.0, "total_units": 90},
+            ],
+        }
+        tracked_skus = {"UFBub250", "UFRos250"}
+
+        result = parse_velocity_report(raw_report, tracked_skus, period_days=30)
+
+        assert len(result) == 1
+        assert result[0].sku == "UFRos250"
+
+    def test_parse_velocity_report_empty_response(self) -> None:
+        """Test parsing empty velocity report."""
+        raw_report: dict[str, list[dict[str, str]]] = {"skus": []}
+        tracked_skus = {"UFBub250"}
+
+        result = parse_velocity_report(raw_report, tracked_skus, period_days=30)
+
+        assert len(result) == 0
+
+    def test_parse_velocity_report_rounds_rate(self) -> None:
+        """Test that units_per_day is rounded to 2 decimal places."""
+        raw_report = {
+            "skus": [
+                {"sku": "UFBub250", "units_per_day": 5.12345},
+            ],
+        }
+        tracked_skus = {"UFBub250"}
+
+        result = parse_velocity_report(raw_report, tracked_skus, period_days=30)
+
+        assert result[0].units_per_day == 5.12
+
+
+class TestGetVelocityReport:
+    """Tests for GET /inventory/velocity endpoint."""
+
+    def test_get_velocity_report_success(self) -> None:
+        """Test successful retrieval of velocity report."""
+        mock_winedirect_report = {
+            "period_days": 30,
+            "skus": [
+                {"sku": "UFBub250", "units_per_day": 5.2, "total_units": 156},
+                {"sku": "UFRos250", "units_per_day": 3.1, "total_units": 93},
+                {"sku": "OTHER_SKU", "units_per_day": 10.0, "total_units": 300},
+            ],
+        }
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [
+            ("UFBub250",),
+            ("UFRos250",),
+            ("UFRed250",),
+            ("UFCha250",),
+        ]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_velocity_report.return_value = mock_winedirect_report
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/velocity")
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert data["period_days"] == 30
+                assert data["total_skus"] == 2
+                assert "velocities" in data
+
+                skus = [v["sku"] for v in data["velocities"]]
+                assert "UFBub250" in skus
+                assert "UFRos250" in skus
+                assert "OTHER_SKU" not in skus
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_velocity_report_with_period(self) -> None:
+        """Test velocity report with custom period parameter."""
+        mock_winedirect_report = {
+            "period_days": 90,
+            "skus": [
+                {"sku": "UFBub250", "units_per_day": 4.8, "total_units": 432},
+            ],
+        }
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_velocity_report.return_value = mock_winedirect_report
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/velocity", params={"period": 90})
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert data["period_days"] == 90
+
+                # Verify the client was called with period=90
+                mock_client.get_velocity_report.assert_called_once_with(days=90)
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_velocity_report_invalid_period(self) -> None:
+        """Test velocity report with invalid period parameter."""
+        client = TestClient(app)
+        response = client.get("/inventory/velocity", params={"period": 45})
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    def test_get_velocity_report_auth_error(self) -> None:
+        """Test handling of WineDirect authentication error."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_velocity_report.side_effect = WineDirectAuthError(
+                    "Invalid credentials"
+                )
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/velocity")
+
+                assert response.status_code == status.HTTP_401_UNAUTHORIZED
+                assert "authentication failed" in response.json()["detail"].lower()
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_velocity_report_api_error(self) -> None:
+        """Test handling of WineDirect API error."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_velocity_report.side_effect = WineDirectAPIError(
+                    "Server error"
+                )
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/velocity")
+
+                assert response.status_code == status.HTTP_502_BAD_GATEWAY
+                assert "API error" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_velocity_report_empty(self) -> None:
+        """Test handling when no tracked SKUs are in velocity report."""
+        mock_winedirect_report = {
+            "period_days": 30,
+            "skus": [
+                {"sku": "OTHER_SKU", "units_per_day": 10.0, "total_units": 300},
+            ],
+        }
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("UFBub250",)]
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_velocity_report.return_value = mock_winedirect_report
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/velocity")
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert data["total_skus"] == 0
+                assert data["velocities"] == []
+        finally:
+            app.dependency_overrides.clear()
+
+
+class TestGetVelocityBySku:
+    """Tests for GET /inventory/velocity/{sku} endpoint."""
+
+    def test_get_velocity_by_sku_success(self) -> None:
+        """Test successful retrieval of velocity for specific SKU."""
+        mock_winedirect_report = {
+            "period_days": 30,
+            "skus": [
+                {"sku": "UFBub250", "units_per_day": 5.2, "total_units": 156},
+                {"sku": "UFRos250", "units_per_day": 3.1, "total_units": 93},
+            ],
+        }
+
+        mock_product = MagicMock()
+        mock_product.sku = "UFBub250"
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_product
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_velocity_report.return_value = mock_winedirect_report
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/velocity/UFBub250")
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert data["sku"] == "UFBub250"
+                assert data["units_per_day"] == 5.2
+                assert data["total_units"] == 156
+                assert data["period_days"] == 30
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_velocity_by_sku_not_tracked(self) -> None:
+        """Test 404 when SKU is not tracked in the system."""
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            client = TestClient(app)
+            response = client.get("/inventory/velocity/UNKNOWN_SKU")
+
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+            assert "not tracked" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_velocity_by_sku_not_in_report(self) -> None:
+        """Test 404 when SKU exists in DB but not in velocity report."""
+        mock_winedirect_report = {
+            "period_days": 30,
+            "skus": [
+                {"sku": "UFRos250", "units_per_day": 3.1, "total_units": 93},
+            ],
+        }
+
+        mock_product = MagicMock()
+        mock_product.sku = "UFBub250"
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_product
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_velocity_report.return_value = mock_winedirect_report
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/velocity/UFBub250")
+
+                assert response.status_code == status.HTTP_404_NOT_FOUND
+                assert "not found in WineDirect" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_velocity_by_sku_with_period(self) -> None:
+        """Test velocity by SKU with custom period parameter."""
+        mock_winedirect_report = {
+            "period_days": 60,
+            "skus": [
+                {"sku": "UFBub250", "units_per_day": 5.0, "total_units": 300},
+            ],
+        }
+
+        mock_product = MagicMock()
+        mock_product.sku = "UFBub250"
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_product
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_velocity_report.return_value = mock_winedirect_report
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get(
+                    "/inventory/velocity/UFBub250",
+                    params={"period": 60},
+                )
+
+                assert response.status_code == status.HTTP_200_OK
+                data = response.json()
+                assert data["period_days"] == 60
+
+                mock_client.get_velocity_report.assert_called_once_with(days=60)
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_get_velocity_by_sku_auth_error(self) -> None:
+        """Test handling of WineDirect authentication error for specific SKU."""
+        mock_product = MagicMock()
+        mock_product.sku = "UFBub250"
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_product
+
+        mock_session = AsyncMock(spec=AsyncSession)
+        mock_session.execute.return_value = mock_result
+
+        async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+            yield mock_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch(
+                "src.api.inventory.WineDirectClient"
+            ) as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client.get_velocity_report.side_effect = WineDirectAuthError(
+                    "Invalid credentials"
+                )
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.__aexit__.return_value = None
+                mock_client_class.return_value = mock_client
+
+                client = TestClient(app)
+                response = client.get("/inventory/velocity/UFBub250")
+
+                assert response.status_code == status.HTTP_401_UNAUTHORIZED
         finally:
             app.dependency_overrides.clear()

@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 10
+- Completed: 11
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -69,9 +69,11 @@
   - Completed: 2026-02-03
   - Notes: Created GET /inventory/out endpoint that fetches depletion events from WineDirect API. Features include: date range filtering via start_date/end_date query params (defaults to last 24 hours), filtering to tracked SKUs only, handling of multiple timestamp field formats (timestamp, date, event_date, transaction_date) and SKU field names (sku, item_code, product_code). Response includes DepletionEvent schema with sku, quantity, timestamp, order_id, customer, and warehouse. 8 new tests covering success, date range, auth errors, API errors, empty results, alternative field names, datetime objects, and Z-suffix timestamps.
 
-- [ ] **Task 1.3.4**: Implement velocity report parsing (30/60/90 day)
+- [x] **Task 1.3.4**: Implement velocity report parsing (30/60/90 day)
   - Spec: specs/02-winedirect-integration.md
   - Acceptance: Depletion rates extracted correctly
+  - Completed: 2026-02-03
+  - Notes: Created parse_velocity_report() function that extracts depletion rates (units_per_day) from WineDirect velocity reports for 30/60/90 day periods. Handles multiple response formats (skus/data/items keys, direct list), alternative field names (velocity, rate, depletion_rate), and calculates missing rate/total from available data. Added GET /inventory/velocity endpoint returning VelocityResponse with SkuVelocity list, and GET /inventory/velocity/{sku} for single SKU lookup. VelocityPeriod IntEnum used for type-safe period validation. 20 new tests covering parsing and endpoints.
 
 - [ ] **Task 1.3.5**: Create daily sync job with Celery
   - Spec: specs/02-winedirect-integration.md

@@ -1,10 +1,11 @@
 """FastAPI routes for inventory management."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from enum import IntEnum
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,14 @@ from src.services.winedirect import (
     WineDirectAuthError,
     WineDirectClient,
 )
+
+
+class VelocityPeriod(IntEnum):
+    """Valid lookback periods for velocity reports."""
+
+    DAYS_30 = 30
+    DAYS_60 = 60
+    DAYS_90 = 90
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
@@ -286,3 +295,238 @@ async def get_inventory_out(
         start_date=start_date,
         end_date=end_date,
     )
+
+
+class SkuVelocity(BaseModel):
+    """Schema for a single SKU's velocity metrics."""
+
+    sku: str
+    units_per_day: float = Field(description="Average depletion rate in units per day")
+    total_units: int = Field(description="Total units depleted in the period")
+    period_days: int = Field(description="Lookback period in days")
+
+    model_config = {"from_attributes": True}
+
+
+class VelocityResponse(BaseModel):
+    """Response schema for velocity endpoint."""
+
+    period_days: int = Field(description="Lookback period (30, 60, or 90 days)")
+    velocities: list[SkuVelocity] = Field(description="Velocity metrics by SKU")
+    total_skus: int = Field(description="Number of SKUs with velocity data")
+
+
+def parse_velocity_report(
+    raw_report: dict[str, Any],
+    tracked_skus: set[str],
+    period_days: int,
+) -> list[SkuVelocity]:
+    """Parse velocity report data from WineDirect API response.
+
+    Extracts depletion rates per SKU from the raw API response, handling
+    various possible field names and response structures.
+
+    Args:
+        raw_report: Raw velocity report from WineDirect API.
+        tracked_skus: Set of SKUs tracked in our system.
+        period_days: The lookback period (30, 60, or 90 days).
+
+    Returns:
+        List of SkuVelocity objects for tracked SKUs.
+    """
+    velocities: list[SkuVelocity] = []
+
+    # Handle various response structures
+    # Could be: {"skus": [...]}, {"data": [...]}, {"items": [...]}, or direct list
+    sku_data: list[dict[str, Any]] = []
+    if isinstance(raw_report, list):
+        sku_data = raw_report
+    elif "skus" in raw_report:
+        sku_data = raw_report["skus"]
+    elif "data" in raw_report:
+        sku_data = raw_report["data"]
+    elif "items" in raw_report:
+        sku_data = raw_report["items"]
+    elif "velocities" in raw_report:
+        sku_data = raw_report["velocities"]
+
+    for item in sku_data:
+        # Extract SKU from various possible field names
+        sku = (
+            item.get("sku")
+            or item.get("item_code")
+            or item.get("product_code")
+            or item.get("sku_code")
+        )
+        if not sku or sku not in tracked_skus:
+            continue
+
+        # Extract units per day from various possible field names
+        units_per_day: float | None = None
+        for field in [
+            "units_per_day",
+            "velocity",
+            "rate",
+            "depletion_rate",
+            "avg_daily_units",
+            "daily_rate",
+        ]:
+            if field in item and item[field] is not None:
+                units_per_day = float(item[field])
+                break
+
+        # Extract total units from various possible field names
+        total_units: int = 0
+        for field in [
+            "total_units",
+            "total_quantity",
+            "quantity",
+            "units",
+            "total_depleted",
+        ]:
+            if field in item and item[field] is not None:
+                total_units = int(item[field])
+                break
+
+        # If we have total_units but not units_per_day, calculate it
+        if units_per_day is None and total_units > 0:
+            units_per_day = total_units / period_days
+        # If we have units_per_day but not total_units, calculate it
+        elif units_per_day is not None and total_units == 0:
+            total_units = int(units_per_day * period_days)
+        # If neither is available, skip this SKU
+        elif units_per_day is None:
+            continue
+
+        velocities.append(
+            SkuVelocity(
+                sku=sku,
+                units_per_day=round(units_per_day, 2),
+                total_units=total_units,
+                period_days=period_days,
+            )
+        )
+
+    return velocities
+
+
+@router.get("/velocity", response_model=VelocityResponse)
+async def get_velocity_report(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    period: Annotated[
+        VelocityPeriod,
+        Query(description="Lookback period in days (30, 60, or 90)"),
+    ] = VelocityPeriod.DAYS_30,
+) -> VelocityResponse:
+    """Fetch velocity (depletion rate) report from WineDirect.
+
+    Returns daily depletion rates for all tracked SKUs based on the
+    specified lookback period (30, 60, or 90 days).
+
+    Args:
+        period: Lookback period in days. Must be 30, 60, or 90.
+
+    Returns:
+        VelocityResponse: Velocity metrics for tracked SKUs.
+
+    Raises:
+        HTTPException: 401 if WineDirect authentication fails.
+        HTTPException: 502 if WineDirect API call fails.
+        HTTPException: 503 if WineDirect service is unavailable.
+    """
+    # Get the list of tracked SKUs from the database
+    result = await db.execute(select(Product.sku))
+    tracked_skus = {row[0] for row in result.fetchall()}
+
+    try:
+        async with WineDirectClient() as client:
+            raw_report = await client.get_velocity_report(days=period)
+    except WineDirectAuthError as e:
+        raise HTTPException(
+            status_code=401,
+            detail=f"WineDirect authentication failed: {e}",
+        ) from e
+    except WineDirectAPIError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"WineDirect API error: {e}",
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"WineDirect service unavailable: {e}",
+        ) from e
+
+    # Parse the velocity report, filtering to tracked SKUs
+    velocities = parse_velocity_report(raw_report, tracked_skus, period)
+
+    return VelocityResponse(
+        period_days=period,
+        velocities=velocities,
+        total_skus=len(velocities),
+    )
+
+
+@router.get("/velocity/{sku}", response_model=SkuVelocity)
+async def get_velocity_by_sku(
+    sku: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    period: Annotated[
+        VelocityPeriod,
+        Query(description="Lookback period in days (30, 60, or 90)"),
+    ] = VelocityPeriod.DAYS_30,
+) -> SkuVelocity:
+    """Fetch velocity (depletion rate) for a specific SKU.
+
+    Args:
+        sku: The product SKU to fetch velocity for.
+        period: Lookback period in days. Must be 30, 60, or 90.
+
+    Returns:
+        SkuVelocity: Velocity metrics for the specified SKU.
+
+    Raises:
+        HTTPException: 404 if SKU is not tracked in the system.
+        HTTPException: 404 if SKU not found in velocity report.
+        HTTPException: 401 if WineDirect authentication fails.
+        HTTPException: 502 if WineDirect API call fails.
+    """
+    # Verify the SKU exists in our system
+    result = await db.execute(select(Product).where(Product.sku == sku))
+    product = result.scalar_one_or_none()
+
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail=f"SKU '{sku}' is not tracked in the system",
+        )
+
+    try:
+        async with WineDirectClient() as client:
+            raw_report = await client.get_velocity_report(days=period)
+    except WineDirectAuthError as e:
+        raise HTTPException(
+            status_code=401,
+            detail=f"WineDirect authentication failed: {e}",
+        ) from e
+    except WineDirectAPIError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"WineDirect API error: {e}",
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"WineDirect service unavailable: {e}",
+        ) from e
+
+    # Parse the velocity report for the specific SKU
+    velocities = parse_velocity_report(raw_report, {sku}, period)
+
+    if not velocities:
+        raise HTTPException(
+            status_code=404,
+            detail=f"SKU '{sku}' not found in WineDirect velocity report",
+        )
+
+    return velocities[0]
