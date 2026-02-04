@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 13
+- Completed: 14
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -88,9 +88,11 @@
   - Completed: 2026-02-03
   - Notes: Created POST /upload endpoint in src/api/upload.py accepting multipart/form-data with CSV and Excel files (.csv, .xlsx, .xls). Features include: file extension validation, content type validation, file size limit (10MB), empty file detection, optional distributor parameter (RNDC, Southern Glazers, Winebow). Returns ProcessingResult with filename, distributor, success/error counts, and validation errors. Actual file parsing will be implemented in tasks 1.4.2-1.4.5. 28 tests covering validation functions and endpoint behavior.
 
-- [ ] **Task 1.4.2**: Implement RNDC report parser
+- [x] **Task 1.4.2**: Implement RNDC report parser
   - Spec: specs/03-distributor-data-processing.md
   - Acceptance: Parses Date, Invoice, Account, SKU, Qty Sold fields
+  - Completed: 2026-02-03
+  - Notes: Created src/services/distributor.py with parse_rndc_report() function supporting both CSV and Excel formats. Features include: flexible column name matching (date, ship_date, etc.), multiple date format support (YYYY-MM-DD, MM/DD/YYYY, etc.), optional field parsing (Invoice, Account, Description, Unit Price, Extended), quantity parsing with comma separators. Added openpyxl dependency for Excel support. Integrated parser with POST /upload endpoint (distributor="RNDC"). 56 tests covering parsing functions, CSV, Excel, and edge cases (empty files, missing columns, invalid data).
 
 - [ ] **Task 1.4.3**: Implement Southern Glazers report parser
   - Spec: specs/03-distributor-data-processing.md

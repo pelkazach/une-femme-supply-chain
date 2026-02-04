@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
+from src.services.distributor import parse_rndc_report
 
 # Maximum file size: 10MB
 MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -189,27 +190,52 @@ async def upload_distributor_file(
     validate_content_type(file.content_type, extension)
 
     # Read and validate file size
-    # Note: contents will be used in tasks 1.4.2-1.4.5 for actual parsing
-    _contents = await validate_file_size(file)
+    contents = await validate_file_size(file)
 
-    # For now, return a placeholder response indicating file was received
-    # Actual parsing will be implemented in tasks 1.4.2-1.4.5
-    result = ProcessingResult(
-        filename=filename,
-        distributor=distributor,
-        total_rows=0,
-        success_count=0,
-        error_count=0,
-        errors=[
-            ValidationError(
-                row=0,
-                field=None,
-                message="File parsing not yet implemented. File received and validated.",
-            )
-        ],
-    )
+    # Parse the file based on distributor type
+    # For now, only RNDC is implemented
+    if distributor and distributor.upper() == "RNDC":
+        parse_result = parse_rndc_report(contents, extension)
+        result = ProcessingResult(
+            filename=filename,
+            distributor="RNDC",
+            total_rows=parse_result.total_rows,
+            success_count=parse_result.success_count,
+            error_count=parse_result.error_count,
+            errors=[
+                ValidationError(
+                    row=err.row_number,
+                    field=err.field,
+                    message=err.message,
+                )
+                for err in parse_result.errors
+            ],
+        )
+        message = (
+            f"File parsed successfully. {parse_result.success_count} rows processed."
+            if parse_result.success_count > 0
+            else "File parsing completed with errors."
+        )
+    else:
+        # For other distributors, return placeholder
+        # Parsers for Southern Glazers and Winebow will be implemented in tasks 1.4.3-1.4.4
+        result = ProcessingResult(
+            filename=filename,
+            distributor=distributor,
+            total_rows=0,
+            success_count=0,
+            error_count=0,
+            errors=[
+                ValidationError(
+                    row=0,
+                    field=None,
+                    message=f"Parser for distributor '{distributor or 'auto-detect'}' not yet implemented.",
+                )
+            ],
+        )
+        message = "File received. Parser not yet implemented for this distributor."
 
     return UploadResponse(
-        message="File uploaded successfully. Processing pending implementation.",
+        message=message,
         result=result,
     )

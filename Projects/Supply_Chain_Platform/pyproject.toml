@@ -24,6 +24,8 @@ redis = "^5.2.0"
 prophet = "^1.1.0"
 pandas = "^2.2.0"
 numpy = "^2.0.0"
+# Excel file support
+openpyxl = "^3.1.0"
 # HTTP client
 httpx = "^0.28.0"
 # LangGraph agents
@@ -66,7 +68,7 @@ disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "prophet.*", "redis.*"]
+module = ["celery.*", "prophet.*", "redis.*", "pandas.*", "openpyxl.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
