@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 24
+- Completed: 25
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -168,9 +168,11 @@
   - Completed: 2026-02-03
   - Notes: Created SQL queries for ship:dep ratio dashboards: ship_dep_ratio.sql (uses mv_doh_metrics), ship_dep_ratio_by_sku.sql (aggregated by SKU), and ship_dep_ratio_direct.sql (real-time from inventory_events). Added SHIP_DEP_RATIO_QUERY and SHIP_DEP_RATIO_BY_SKU_QUERY to setup script. Created setup_ratio_visualizations() function with bar chart configuration and color coding (Red=UNDERSUPPLY <0.5, Yellow=OVERSUPPLY >2.0, Green=BALANCED). Added create_visualization() and get_query() methods to RedashClient. 42 new tests covering SQL queries and script functionality.
 
-- [ ] **Task 1.6.5**: Configure stock-out risk alert (DOH_T30 < 14)
+- [x] **Task 1.6.5**: Configure stock-out risk alert (DOH_T30 < 14)
   - Spec: specs/06-dashboard-alerting.md
   - Acceptance: Alert fires when threshold breached
+  - Completed: 2026-02-03
+  - Notes: Created SQL query (stockout_alert.sql) that returns SKUs with DOH_T30 < 14 days. Added alert API methods to RedashClient (get_alerts, get_alert, create_alert, update_alert, get_alert_subscriptions, add_alert_subscription, get_destinations). Created setup_stockout_alert() function that: 1) Creates/updates the alert query, 2) Creates/updates the alert with custom subject/body. Alert rearms after 1 hour to prevent spam. 21 new tests covering SQL syntax, query content, helper functions, and API methods.
 
 - [ ] **Task 1.6.6**: Configure Slack notification for alerts
   - Spec: specs/06-dashboard-alerting.md

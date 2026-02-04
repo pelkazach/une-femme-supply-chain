@@ -500,6 +500,213 @@ class TestShipDepRatioSQLSyntax:
         return sql
 
 
+# Fixtures for stock-out alert query
+@pytest.fixture
+def stockout_alert_query() -> str:
+    """Load stock-out alert SQL query."""
+    query_path = SQL_DIR / "stockout_alert.sql"
+    return query_path.read_text()
+
+
+class TestStockoutAlertQuery:
+    """Tests for Stock-Out Alert query."""
+
+    def test_query_file_exists(self, stockout_alert_query: str):
+        """Test that stockout alert SQL file exists and has content."""
+        assert len(stockout_alert_query) > 100
+
+    def test_query_has_select(self, stockout_alert_query: str):
+        """Test that query has SELECT statement."""
+        assert "SELECT" in stockout_alert_query
+
+    def test_query_uses_materialized_view(self, stockout_alert_query: str):
+        """Test that query uses mv_doh_metrics materialized view."""
+        assert "mv_doh_metrics" in stockout_alert_query
+
+    def test_query_filters_doh_below_14(self, stockout_alert_query: str):
+        """Test that query filters for DOH_T30 < 14."""
+        assert "doh_t30" in stockout_alert_query.lower()
+        assert "< 14" in stockout_alert_query
+
+    def test_query_includes_threshold(self, stockout_alert_query: str):
+        """Test that query includes threshold value of 14 days."""
+        assert "14" in stockout_alert_query
+        assert "threshold" in stockout_alert_query.lower()
+
+    def test_query_includes_sku(self, stockout_alert_query: str):
+        """Test that query includes SKU column."""
+        assert "p.sku" in stockout_alert_query
+
+    def test_query_includes_warehouse(self, stockout_alert_query: str):
+        """Test that query includes warehouse information."""
+        assert "warehouse" in stockout_alert_query.lower()
+
+    def test_query_includes_on_hand(self, stockout_alert_query: str):
+        """Test that query includes on-hand inventory."""
+        assert "on_hand" in stockout_alert_query or "current_inventory" in stockout_alert_query
+
+    def test_query_joins_products(self, stockout_alert_query: str):
+        """Test that query joins products table."""
+        assert "JOIN products" in stockout_alert_query or "products p" in stockout_alert_query
+
+    def test_query_joins_warehouses(self, stockout_alert_query: str):
+        """Test that query joins warehouses table."""
+        assert "JOIN warehouses" in stockout_alert_query or "warehouses w" in stockout_alert_query
+
+    def test_query_has_where_clause(self, stockout_alert_query: str):
+        """Test that query has WHERE clause for filtering."""
+        assert "WHERE" in stockout_alert_query
+
+    def test_query_excludes_null_doh(self, stockout_alert_query: str):
+        """Test that query excludes NULL DOH values (no sales)."""
+        assert "IS NOT NULL" in stockout_alert_query
+
+    def test_query_has_order_by(self, stockout_alert_query: str):
+        """Test that query has ORDER BY clause."""
+        assert "ORDER BY" in stockout_alert_query
+
+
+class TestStockoutAlertSQLSyntax:
+    """Tests for SQL syntax validation for stock-out alert query."""
+
+    def test_stockout_alert_no_unclosed_strings(self, stockout_alert_query: str):
+        """Test that stockout alert query has no unclosed strings."""
+        clean = self._remove_comments(stockout_alert_query)
+        quote_count = clean.count("'")
+        assert quote_count % 2 == 0, "Unclosed string literal detected"
+
+    def _remove_comments(self, sql: str) -> str:
+        """Remove SQL comments from query."""
+        import re
+        return re.sub(r"--.*$", "", sql, flags=re.MULTILINE)
+
+    def test_stockout_alert_balanced_parentheses(self, stockout_alert_query: str):
+        """Test that stockout alert query has balanced parentheses."""
+        clean = self._remove_strings_and_comments(stockout_alert_query)
+        assert clean.count("(") == clean.count(")"), "Unbalanced parentheses detected"
+
+    def _remove_strings_and_comments(self, sql: str) -> str:
+        """Remove string literals and comments from SQL for syntax checking."""
+        import re
+
+        # Remove single-line comments
+        sql = re.sub(r"--.*$", "", sql, flags=re.MULTILINE)
+        # Remove string literals (simplified - doesn't handle escaped quotes)
+        sql = re.sub(r"'[^']*'", "''", sql)
+        return sql
+
+
+class TestRedashSetupScriptAlerts:
+    """Tests for Redash setup script alert functionality."""
+
+    def test_script_has_stockout_alert_query(self):
+        """Test that script contains stock-out alert query."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        assert hasattr(module, "STOCKOUT_ALERT_QUERY")
+        query = module.STOCKOUT_ALERT_QUERY
+        assert "SELECT" in query
+        assert "doh_t30" in query.lower()
+        assert "< 14" in query
+
+    def test_script_has_setup_stockout_alert_function(self):
+        """Test that script has setup_stockout_alert function."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        assert hasattr(module, "setup_stockout_alert")
+
+    def test_script_has_find_alert_by_name_function(self):
+        """Test that script has find_alert_by_name helper function."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        assert hasattr(module, "find_alert_by_name")
+
+    def test_redash_client_has_alert_methods(self):
+        """Test that RedashClient has alert-related methods."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        client_class = module.RedashClient
+        assert hasattr(client_class, "get_alerts")
+        assert hasattr(client_class, "get_alert")
+        assert hasattr(client_class, "create_alert")
+        assert hasattr(client_class, "update_alert")
+        assert hasattr(client_class, "get_alert_subscriptions")
+        assert hasattr(client_class, "add_alert_subscription")
+        assert hasattr(client_class, "get_destinations")
+
+    def test_find_alert_by_name_finds_existing_alert(self):
+        """Test that find_alert_by_name finds an alert by name."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        alerts = [
+            {"id": 1, "name": "Alert 1"},
+            {"id": 2, "name": "Stock-Out Risk Alert"},
+            {"id": 3, "name": "Alert 3"},
+        ]
+        result = module.find_alert_by_name(alerts, "Stock-Out Risk Alert")
+        assert result is not None
+        assert result["id"] == 2
+
+    def test_find_alert_by_name_returns_none_for_missing(self):
+        """Test that find_alert_by_name returns None when alert not found."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        alerts = [
+            {"id": 1, "name": "Alert 1"},
+            {"id": 2, "name": "Alert 2"},
+        ]
+        result = module.find_alert_by_name(alerts, "Nonexistent Alert")
+        assert result is None
+
+
 class TestRedashSetupScriptRatios:
     """Tests for Redash setup script ratio queries."""
 

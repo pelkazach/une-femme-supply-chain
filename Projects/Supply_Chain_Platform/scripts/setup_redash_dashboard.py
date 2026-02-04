@@ -178,6 +178,30 @@ ORDER BY
     a30_ship_dep_ratio ASC NULLS LAST;
 """
 
+# SQL query for Stock-Out Risk Alert (DOH_T30 < 14)
+STOCKOUT_ALERT_QUERY = """
+-- Stock-Out Risk Alert: Triggers when DOH_T30 < 14 days
+-- Alert fires when any SKU has less than 14 days of inventory on hand
+SELECT
+    p.sku,
+    p.name as product_name,
+    w.name as warehouse,
+    m.current_inventory as on_hand,
+    m.depletions_30d,
+    ROUND(m.doh_t30, 1) as doh_t30,
+    14 as threshold_days,
+    ROUND(14 - m.doh_t30, 1) as days_below_threshold,
+    m.calculated_at
+FROM mv_doh_metrics m
+JOIN products p ON m.sku_id = p.id
+JOIN warehouses w ON m.warehouse_id = w.id
+WHERE
+    m.doh_t30 IS NOT NULL
+    AND m.doh_t30 < 14
+ORDER BY
+    m.doh_t30 ASC;
+"""
+
 
 class RedashClient:
     """Client for Redash API operations."""
@@ -438,6 +462,170 @@ class RedashClient:
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
 
+    def get_alerts(self) -> list[dict[str, Any]]:
+        """Get list of alerts.
+
+        Returns:
+            List of alert dictionaries
+        """
+        response = httpx.get(
+            f"{self.base_url}/api/alerts",
+            headers=self.headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(list[dict[str, Any]], response.json())
+
+    def get_alert(self, alert_id: int) -> dict[str, Any]:
+        """Get an alert by ID.
+
+        Args:
+            alert_id: ID of the alert
+
+        Returns:
+            Alert dictionary
+        """
+        response = httpx.get(
+            f"{self.base_url}/api/alerts/{alert_id}",
+            headers=self.headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def create_alert(
+        self,
+        name: str,
+        query_id: int,
+        options: dict[str, Any],
+        rearm: int | None = None,
+    ) -> dict[str, Any]:
+        """Create a new alert.
+
+        Args:
+            name: Alert name
+            query_id: ID of the query to monitor
+            options: Alert options including:
+                - column: Column name to check
+                - op: Comparison operator (greater than, less than, equals, etc.)
+                - value: Threshold value
+                - custom_subject: Custom email subject
+                - custom_body: Custom alert message body
+            rearm: Seconds before alert can fire again (None for one-time)
+
+        Returns:
+            Created alert dictionary
+        """
+        payload: dict[str, Any] = {
+            "name": name,
+            "query_id": query_id,
+            "options": options,
+        }
+        if rearm is not None:
+            payload["rearm"] = rearm
+
+        response = httpx.post(
+            f"{self.base_url}/api/alerts",
+            headers=self.headers,
+            json=payload,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def update_alert(
+        self,
+        alert_id: int,
+        name: str | None = None,
+        options: dict[str, Any] | None = None,
+        rearm: int | None = None,
+    ) -> dict[str, Any]:
+        """Update an existing alert.
+
+        Args:
+            alert_id: ID of the alert to update
+            name: New alert name (optional)
+            options: New alert options (optional)
+            rearm: New rearm value (optional)
+
+        Returns:
+            Updated alert dictionary
+        """
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if options is not None:
+            payload["options"] = options
+        if rearm is not None:
+            payload["rearm"] = rearm
+
+        response = httpx.post(
+            f"{self.base_url}/api/alerts/{alert_id}",
+            headers=self.headers,
+            json=payload,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def get_alert_subscriptions(self, alert_id: int) -> list[dict[str, Any]]:
+        """Get subscriptions for an alert.
+
+        Args:
+            alert_id: ID of the alert
+
+        Returns:
+            List of subscription dictionaries
+        """
+        response = httpx.get(
+            f"{self.base_url}/api/alerts/{alert_id}/subscriptions",
+            headers=self.headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(list[dict[str, Any]], response.json())
+
+    def add_alert_subscription(
+        self,
+        alert_id: int,
+        destination_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Add a subscription to an alert.
+
+        Args:
+            alert_id: ID of the alert
+            destination_id: ID of the notification destination (None for email to self)
+
+        Returns:
+            Created subscription dictionary
+        """
+        payload: dict[str, Any] = {}
+        if destination_id is not None:
+            payload["destination_id"] = destination_id
+
+        response = httpx.post(
+            f"{self.base_url}/api/alerts/{alert_id}/subscriptions",
+            headers=self.headers,
+            json=payload,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def get_destinations(self) -> list[dict[str, Any]]:
+        """Get list of notification destinations.
+
+        Returns:
+            List of destination dictionaries (Slack, email, webhooks, etc.)
+        """
+        response = httpx.get(
+            f"{self.base_url}/api/destinations",
+            headers=self.headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(list[dict[str, Any]], response.json())
+
 
 def find_query_by_name(queries: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
     """Find a query by name.
@@ -470,6 +658,24 @@ def find_dashboard_by_name(
     for dashboard in dashboards:
         if dashboard.get("name") == name:
             return dashboard
+    return None
+
+
+def find_alert_by_name(
+    alerts: list[dict[str, Any]], name: str
+) -> dict[str, Any] | None:
+    """Find an alert by name.
+
+    Args:
+        alerts: List of alert dictionaries
+        name: Alert name to find
+
+    Returns:
+        Alert dictionary if found, None otherwise
+    """
+    for alert in alerts:
+        if alert.get("name") == name:
+            return alert
     return None
 
 
@@ -623,6 +829,122 @@ def setup_ratio_visualizations(
     return created_visualizations
 
 
+def setup_stockout_alert(
+    client: RedashClient, data_source_id: int
+) -> dict[str, Any] | None:
+    """Set up stock-out risk alert in Redash.
+
+    Creates an alert that fires when DOH_T30 < 14 days for any SKU.
+    The alert is configured to monitor the query result count -
+    if any rows are returned (meaning SKUs below threshold), the alert fires.
+
+    Args:
+        client: Redash API client
+        data_source_id: ID of the data source to use
+
+    Returns:
+        Alert dictionary if created/updated, None if creation failed
+    """
+    alert_name = "Stock-Out Risk Alert"
+    query_name = "Stock-Out Risk Alert Query"
+
+    # First, create/update the alert query
+    existing_queries = client.get_queries()
+    existing_query = find_query_by_name(existing_queries, query_name)
+
+    if existing_query:
+        print(f"Updating existing query: {query_name} (ID: {existing_query['id']})")
+        client.update_query(
+            query_id=existing_query["id"],
+            name=query_name,
+            query=STOCKOUT_ALERT_QUERY,
+            description="Returns SKUs at critical stock-out risk (DOH_T30 < 14 days). "
+            "Used for alert configuration - alert fires when query returns rows.",
+        )
+        query_id = existing_query["id"]
+    else:
+        print(f"Creating query: {query_name}")
+        result = client.create_query(
+            name=query_name,
+            query=STOCKOUT_ALERT_QUERY,
+            data_source_id=data_source_id,
+            description="Returns SKUs at critical stock-out risk (DOH_T30 < 14 days). "
+            "Used for alert configuration - alert fires when query returns rows.",
+        )
+        query_id = result["id"]
+        print(f"  Created with ID: {query_id}")
+
+    # Execute the query once to initialize it (required for alert creation)
+    print("  Executing query to initialize...")
+    try:
+        client.execute_query(query_id)
+    except httpx.HTTPStatusError as e:
+        print(f"  Warning: Query execution returned error (may be expected if no data): {e}")
+
+    # Now create/update the alert
+    existing_alerts = client.get_alerts()
+    existing_alert = find_alert_by_name(existing_alerts, alert_name)
+
+    # Alert options: fires when query returns any rows (count > 0)
+    # Redash alerts monitor a specific column value
+    # We use the 'sku' column and check if it's not empty (any value triggers)
+    alert_options = {
+        "column": "sku",
+        "op": "greater than",  # Fires when there's at least one SKU
+        "value": 0,  # Actually, we need to check row count
+        "custom_subject": "CRITICAL: Stock-Out Risk Detected",
+        "custom_body": (
+            "One or more SKUs have fallen below the 14-day stock threshold.\n\n"
+            "Action Required: Review inventory levels and consider placing orders.\n\n"
+            "View details: {{query_url}}"
+        ),
+    }
+
+    # For row count based alerts, Redash uses a special approach
+    # We check the row count using the built-in functionality
+    # The "greater than 0" check on any column will fire if rows exist
+    alert_options = {
+        "column": "doh_t30",
+        "op": "less than",
+        "value": 14,
+        "custom_subject": "CRITICAL: Stock-Out Risk - DOH Below 14 Days",
+        "custom_body": (
+            "Stock-out risk detected!\n\n"
+            "One or more SKUs have Days on Hand (DOH_T30) below 14 days.\n\n"
+            "Immediate action may be required to prevent stock-outs.\n\n"
+            "View full details: {{query_url}}"
+        ),
+    }
+
+    # Rearm after 1 hour (3600 seconds) - prevents alert spam
+    rearm_seconds = 3600
+
+    if existing_alert:
+        print(f"Updating existing alert: {alert_name} (ID: {existing_alert['id']})")
+        result = client.update_alert(
+            alert_id=existing_alert["id"],
+            name=alert_name,
+            options=alert_options,
+            rearm=rearm_seconds,
+        )
+        print("  Updated alert")
+        return result
+    else:
+        print(f"Creating alert: {alert_name}")
+        try:
+            result = client.create_alert(
+                name=alert_name,
+                query_id=query_id,
+                options=alert_options,
+                rearm=rearm_seconds,
+            )
+            print(f"  Created with ID: {result['id']}")
+            return result
+        except httpx.HTTPStatusError as e:
+            print(f"  Error creating alert: {e.response.status_code} - {e.response.text}")
+            return None
+
+
 def setup_doh_dashboard(
     client: RedashClient, query_ids: dict[str, int]
 ) -> dict[str, Any]:
@@ -712,12 +1034,21 @@ def main() -> int:
         dashboard = setup_doh_dashboard(client, query_ids)
         print(f"\nDashboard URL: {redash_url}/dashboards/{dashboard['id']}")
 
+        # Set up stock-out alert
+        print("\nSetting up alerts...")
+        stockout_alert = setup_stockout_alert(client, data_source["id"])
+        if stockout_alert:
+            print(f"Stock-Out Alert ID: {stockout_alert['id']}")
+        else:
+            print("Warning: Stock-out alert setup failed or skipped")
+
         print("\nSetup complete!")
         print("\nNext steps:")
         print("1. Open the queries in Redash and verify they work")
         print("2. Add visualizations (charts) to the queries")
         print("3. Add the visualizations to the dashboard")
         print("4. Set up auto-refresh schedule (5 minutes)")
+        print("5. Configure Slack/email notification destinations for alerts")
 
         return 0
 
