@@ -969,3 +969,181 @@ class TestRedashSetupScriptSlackNotification:
 
         result = module.find_subscription_by_destination([], 1)
         assert result is None
+
+
+class TestRedashSetupScriptEmailNotification:
+    """Tests for Redash setup script email notification functionality."""
+
+    def test_script_has_setup_email_notification_function(self):
+        """Test that script has setup_email_notification function."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        assert hasattr(module, "setup_email_notification")
+
+    def test_setup_email_notification_uses_environment_variable(self):
+        """Test that setup_email_notification uses ALERT_EMAIL_ADDRESSES env var."""
+        import importlib.util
+        import inspect
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Check function signature includes email_addresses parameter
+        sig = inspect.signature(module.setup_email_notification)
+        assert "email_addresses" in sig.parameters
+
+        # Check function body references ALERT_EMAIL_ADDRESSES
+        source = inspect.getsource(module.setup_email_notification)
+        assert "ALERT_EMAIL_ADDRESSES" in source
+
+    def test_setup_email_notification_creates_email_destination(self):
+        """Test that setup_email_notification creates email destination type."""
+        import importlib.util
+        import inspect
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Check function creates email type destination
+        source = inspect.getsource(module.setup_email_notification)
+        assert 'destination_type="email"' in source or "destination_type='email'" in source
+
+    def test_setup_email_notification_has_destination_name(self):
+        """Test that setup_email_notification uses correct destination name."""
+        import importlib.util
+        import inspect
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Check function uses appropriate destination name
+        source = inspect.getsource(module.setup_email_notification)
+        assert "Email - Supply Chain Alerts" in source
+
+    def test_setup_email_notification_uses_addresses_option(self):
+        """Test that setup_email_notification passes addresses in options."""
+        import importlib.util
+        import inspect
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Check function uses "addresses" option key for email
+        source = inspect.getsource(module.setup_email_notification)
+        assert '"addresses"' in source or "'addresses'" in source
+
+    def test_setup_email_notification_reuses_existing_destination(self):
+        """Test that setup_email_notification reuses existing destination."""
+        import importlib.util
+        import inspect
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Check function looks for existing destinations
+        source = inspect.getsource(module.setup_email_notification)
+        assert "find_destination_by_name" in source
+        assert "get_destinations" in source
+
+    def test_setup_email_notification_checks_existing_subscription(self):
+        """Test that setup_email_notification checks for existing subscription."""
+        import importlib.util
+        import inspect
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Check function looks for existing subscriptions
+        source = inspect.getsource(module.setup_email_notification)
+        assert "find_subscription_by_destination" in source
+        assert "get_alert_subscriptions" in source
+
+    def test_setup_email_notification_returns_none_without_config(self):
+        """Test that setup_email_notification returns None when not configured."""
+        import importlib.util
+        import inspect
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Check function returns None early when no addresses configured
+        source = inspect.getsource(module.setup_email_notification)
+        assert "return None" in source
+        assert "Skipping email notification" in source
+
+    def test_main_calls_setup_email_notification(self):
+        """Test that main() calls setup_email_notification."""
+        import importlib.util
+        import inspect
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Check main function calls setup_email_notification
+        source = inspect.getsource(module.main)
+        assert "setup_email_notification" in source
+
+    def test_main_prints_email_env_var_hint(self):
+        """Test that main() prints hint about ALERT_EMAIL_ADDRESSES env var."""
+        import importlib.util
+        import inspect
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Check main function mentions ALERT_EMAIL_ADDRESSES in next steps
+        source = inspect.getsource(module.main)
+        assert "ALERT_EMAIL_ADDRESSES" in source

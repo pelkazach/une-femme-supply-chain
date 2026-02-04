@@ -1145,6 +1145,88 @@ def setup_slack_notification(
         return None
 
 
+def setup_email_notification(
+    client: RedashClient,
+    alert_id: int,
+    email_addresses: str | None = None,
+) -> dict[str, Any] | None:
+    """Set up email notification for an alert.
+
+    Creates or updates an email destination and subscribes the alert to it.
+    The email addresses can be provided directly or via ALERT_EMAIL_ADDRESSES
+    environment variable.
+
+    Args:
+        client: Redash API client
+        alert_id: ID of the alert to configure
+        email_addresses: Comma-separated email addresses (optional, uses env var if not provided)
+
+    Returns:
+        Subscription dictionary if successful, None if setup failed
+    """
+    # Get email addresses from parameter or environment
+    addresses = email_addresses or os.environ.get("ALERT_EMAIL_ADDRESSES")
+
+    if not addresses:
+        print("  Skipping email notification: ALERT_EMAIL_ADDRESSES not configured")
+        print("  Set ALERT_EMAIL_ADDRESSES environment variable to enable email alerts")
+        return None
+
+    destination_name = "Email - Supply Chain Alerts"
+
+    # Check if destination already exists
+    existing_destinations = client.get_destinations()
+    existing_dest = find_destination_by_name(existing_destinations, destination_name)
+
+    if existing_dest:
+        print(f"  Email destination already exists: {destination_name} (ID: {existing_dest['id']})")
+        # Update email addresses if they changed
+        try:
+            client.update_destination(
+                destination_id=existing_dest["id"],
+                options={"addresses": addresses},
+            )
+            print("  Updated email addresses")
+        except httpx.HTTPStatusError as e:
+            print(f"  Warning: Could not update destination: {e}")
+        destination_id = existing_dest["id"]
+    else:
+        # Create new email destination
+        print(f"  Creating email destination: {destination_name}")
+        try:
+            dest = client.create_destination(
+                name=destination_name,
+                destination_type="email",
+                options={"addresses": addresses},
+            )
+            destination_id = dest["id"]
+            print(f"  Created email destination with ID: {destination_id}")
+        except httpx.HTTPStatusError as e:
+            print(f"  Error creating email destination: {e.response.status_code} - {e.response.text}")
+            return None
+
+    # Check if alert is already subscribed to this destination
+    existing_subscriptions = client.get_alert_subscriptions(alert_id)
+    existing_sub = find_subscription_by_destination(existing_subscriptions, destination_id)
+
+    if existing_sub:
+        print(f"  Alert already subscribed to email destination (subscription ID: {existing_sub['id']})")
+        return existing_sub
+
+    # Subscribe alert to email destination
+    print("  Subscribing alert to email destination...")
+    try:
+        subscription = client.add_alert_subscription(
+            alert_id=alert_id,
+            destination_id=destination_id,
+        )
+        print(f"  Created subscription with ID: {subscription['id']}")
+        return subscription
+    except httpx.HTTPStatusError as e:
+        print(f"  Error creating subscription: {e.response.status_code} - {e.response.text}")
+        return None
+
+
 def setup_doh_dashboard(
     client: RedashClient, query_ids: dict[str, int]
 ) -> dict[str, Any]:
@@ -1245,6 +1327,12 @@ def main() -> int:
             slack_sub = setup_slack_notification(client, stockout_alert["id"])
             if slack_sub:
                 print("Slack notification configured successfully")
+
+            # Set up email notification for the alert
+            print("\nSetting up email notification...")
+            email_sub = setup_email_notification(client, stockout_alert["id"])
+            if email_sub:
+                print("Email notification configured successfully")
         else:
             print("Warning: Stock-out alert setup failed or skipped")
 
@@ -1255,6 +1343,7 @@ def main() -> int:
         print("3. Add the visualizations to the dashboard")
         print("4. Set up auto-refresh schedule (5 minutes)")
         print("5. Set SLACK_WEBHOOK_URL environment variable if not already configured")
+        print("6. Set ALERT_EMAIL_ADDRESSES environment variable for email alerts (comma-separated)")
 
         return 0
 
