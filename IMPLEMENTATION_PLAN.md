@@ -238,9 +238,11 @@
   - Completed: 2026-02-03
   - Notes: Created Celery task (src/tasks/email_processor.py) with process_emails task that polls Gmail every 5 minutes. Features include: idempotent processing (skips already-processed emails via message_id), classification using Ollama with rule-based fallback, storage in email_classifications table with confidence scores and needs_review flag. Created EmailClassification SQLAlchemy model with proper indexes including partial index for pending review queue. Created Alembic migration (b2c3d4e5f6g7). Task tracks processing time to ensure <15 second latency per email. 30 new tests covering task functions, model, and acceptance criteria.
 
-- [ ] **Task 2.2.4**: Create human review queue endpoint
+- [x] **Task 2.2.4**: Create human review queue endpoint
   - Spec: specs/07-email-classification.md
   - Acceptance: Low-confidence classifications (<85%) flagged
+  - Completed: 2026-02-03
+  - Notes: Created src/api/review.py with human review queue endpoints. Features include: GET /review/queue (paginated list of pending reviews with category/confidence filters), GET /review/queue/stats (queue statistics including pending count, reviewed today, avg confidence, and breakdown by category), GET /review/queue/{id} (single classification details), POST /review/queue/{id}/review (approve or correct classification with reviewer tracking), GET /review/history (paginated reviewed items with reviewer and corrected_only filters). Added router to main.py. 32 tests covering all endpoints, schemas, pagination, validation, and acceptance criteria.
 
 ### Priority 2.3: Document OCR
 - [ ] **Task 2.3.1**: Integrate Azure Document Intelligence SDK

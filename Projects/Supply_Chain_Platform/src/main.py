@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from src.api.inventory import router as inventory_router
 from src.api.metrics import router as metrics_router
+from src.api.review import router as review_router
 from src.api.upload import router as upload_router
 from src.config import settings
 
@@ -17,6 +18,7 @@ app = FastAPI(
 # Include API routers
 app.include_router(inventory_router)
 app.include_router(metrics_router)
+app.include_router(review_router)
 app.include_router(upload_router)
 
 
