@@ -10,7 +10,11 @@ celery_app = Celery(
     "une_femme",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["src.tasks.winedirect_sync", "src.tasks.forecast_retrain"],
+    include=[
+        "src.tasks.winedirect_sync",
+        "src.tasks.forecast_retrain",
+        "src.tasks.email_processor",
+    ],
 )
 
 # Celery configuration
@@ -40,6 +44,15 @@ celery_app.conf.update(
             "task": "src.tasks.forecast_retrain.retrain_forecasts",
             # Run every Monday at 7 AM UTC (after WineDirect daily sync)
             "schedule": crontab(hour=7, minute=0, day_of_week=1),
+            "options": {"queue": "default"},
+        },
+        "process-emails-periodic": {
+            "task": "src.tasks.email_processor.process_emails",
+            # Run every 5 minutes to check for new emails
+            # Target: 100+ emails/day throughput = ~7 emails per 5 min avg
+            # Processing latency <15 seconds per email
+            "schedule": crontab(minute="*/5"),
+            "kwargs": {"max_emails": 50},
             "options": {"queue": "default"},
         },
     },

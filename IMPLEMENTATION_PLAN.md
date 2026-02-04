@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 33
+- Completed: 34
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -232,9 +232,11 @@
   - Completed: 2026-02-03
   - Notes: Created src/services/email_classifier.py with OllamaClient class and classify_email() async function. Features include: structured CLASSIFICATION_PROMPT with category-specific keywords, JSON response parsing with multiple format handling (direct, code blocks, embedded), validate_classification() with category normalization and confidence clamping, needs_review flag for confidence <85%, rule_based_classify() fallback when Ollama unavailable, classify_email_with_fallback() with retry logic. Added Ollama settings to config.py (ollama_base_url, ollama_model, ollama_timeout). 62 tests covering OllamaClient, parsing, validation, classification, fallback, and accuracy requirements.
 
-- [ ] **Task 2.2.3**: Build email processing queue with Celery
+- [x] **Task 2.2.3**: Build email processing queue with Celery
   - Spec: specs/07-email-classification.md
   - Acceptance: Emails classified within 15 seconds
+  - Completed: 2026-02-03
+  - Notes: Created Celery task (src/tasks/email_processor.py) with process_emails task that polls Gmail every 5 minutes. Features include: idempotent processing (skips already-processed emails via message_id), classification using Ollama with rule-based fallback, storage in email_classifications table with confidence scores and needs_review flag. Created EmailClassification SQLAlchemy model with proper indexes including partial index for pending review queue. Created Alembic migration (b2c3d4e5f6g7). Task tracks processing time to ensure <15 second latency per email. 30 new tests covering task functions, model, and acceptance criteria.
 
 - [ ] **Task 2.2.4**: Create human review queue endpoint
   - Spec: specs/07-email-classification.md
