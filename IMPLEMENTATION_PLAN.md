@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 17
+- Completed: 18
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -113,9 +113,11 @@
   - Notes: Created validate_skus() and validate_and_filter_parse_result() functions in src/services/distributor.py. VALID_SKUS constant contains 4 Une Femme SKUs (UFBub250, UFRos250, UFRed250, UFCha250). Invalid SKUs flagged with specific error messages including the unknown SKU and list of valid SKUs. Upload endpoint updated with validate_skus parameter (default True). 18 new tests covering validation functions and API endpoint behavior.
 
 ### Priority 1.5: Inventory Metrics
-- [ ] **Task 1.5.1**: Implement DOH_T30 calculation function
+- [x] **Task 1.5.1**: Implement DOH_T30 calculation function
   - Spec: specs/04-inventory-metrics.md
   - Acceptance: Matches Excel formula within 1% variance
+  - Completed: 2026-02-03
+  - Notes: Created src/services/metrics.py with calculate_doh_t30() pure function. Formula: DOH_T30 = current_inventory / (depletion_30d / 30). Returns None for zero depletion (cannot calculate DOH with no sales). Added supporting functions: get_current_inventory() (handles snapshot + delta calculation), get_depletion_total() (sums depletions with optional warehouse/distributor filters), calculate_doh_t30_for_sku() (full SKU metrics), calculate_doh_t30_all_skus() (all 4 SKUs). DOHMetrics frozen dataclass stores results. 30 tests covering all acceptance criteria including 1% variance verification.
 
 - [ ] **Task 1.5.2**: Implement DOH_T90 calculation function
   - Spec: specs/04-inventory-metrics.md
