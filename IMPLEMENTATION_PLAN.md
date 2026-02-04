@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 5
+- Completed: 6
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -38,9 +38,11 @@
   - Completed: 2026-02-03
   - Notes: Created InventoryEvent SQLAlchemy model with BRIN index on time column, composite indexes on (sku_id, time) and (warehouse_id, time), and proper foreign key relationships with CASCADE/SET NULL delete behavior. Alembic migration creates all tables (products, warehouses, distributors, inventory_events) with proper indexes.
 
-- [ ] **Task 1.2.3**: Write migration to seed 4 product SKUs
+- [x] **Task 1.2.3**: Write migration to seed 4 product SKUs
   - Spec: specs/01-database-schema.md
   - Acceptance: UFBub250, UFRos250, UFRed250, UFCha250 exist in products table
+  - Completed: 2026-02-03
+  - Notes: Created Alembic migration (52fa8d4129df) that seeds 4 product SKUs with INSERT ... ON CONFLICT DO NOTHING for idempotency. Products: UFBub250 (sparkling), UFRos250 (rose), UFRed250 (red), UFCha250 (white).
 
 - [ ] **Task 1.2.4**: Create materialized views for DOH_T30 and DOH_T90
   - Spec: specs/04-inventory-metrics.md

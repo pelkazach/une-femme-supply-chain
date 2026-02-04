@@ -1,7 +1,7 @@
 """Tests for SQLAlchemy models."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from src.models import Distributor, InventoryEvent, Product, Warehouse
 
@@ -138,7 +138,7 @@ class TestInventoryEventModel:
 
     def test_inventory_event_attributes(self) -> None:
         """Test that InventoryEvent has all required attributes."""
-        event_time = datetime.now(timezone.utc)
+        event_time = datetime.now(UTC)
         sku_id = uuid.uuid4()
         warehouse_id = uuid.uuid4()
 
@@ -158,7 +158,7 @@ class TestInventoryEventModel:
     def test_inventory_event_default_id(self) -> None:
         """Test that InventoryEvent generates a UUID by default."""
         event = InventoryEvent(
-            time=datetime.now(timezone.utc),
+            time=datetime.now(UTC),
             sku_id=uuid.uuid4(),
             warehouse_id=uuid.uuid4(),
             event_type="depletion",
@@ -169,7 +169,7 @@ class TestInventoryEventModel:
     def test_inventory_event_optional_distributor(self) -> None:
         """Test that distributor_id is optional."""
         event = InventoryEvent(
-            time=datetime.now(timezone.utc),
+            time=datetime.now(UTC),
             sku_id=uuid.uuid4(),
             warehouse_id=uuid.uuid4(),
             event_type="adjustment",
@@ -181,7 +181,7 @@ class TestInventoryEventModel:
         """Test InventoryEvent with a distributor."""
         distributor_id = uuid.uuid4()
         event = InventoryEvent(
-            time=datetime.now(timezone.utc),
+            time=datetime.now(UTC),
             sku_id=uuid.uuid4(),
             warehouse_id=uuid.uuid4(),
             distributor_id=distributor_id,
@@ -192,7 +192,7 @@ class TestInventoryEventModel:
 
     def test_inventory_event_repr(self) -> None:
         """Test InventoryEvent string representation."""
-        event_time = datetime.now(timezone.utc)
+        event_time = datetime.now(UTC)
         event = InventoryEvent(
             time=event_time,
             sku_id=uuid.uuid4(),
