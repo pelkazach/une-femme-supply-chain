@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 8
+- Completed: 9
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -57,9 +57,11 @@
   - Completed: 2026-02-03
   - Notes: Created async WineDirectClient in src/services/winedirect.py with Bearer Token authentication via OAuth client credentials grant. Features include automatic token refresh (with 60s buffer before expiry), 401 retry handling, and async context manager pattern. Includes get_sellable_inventory(), get_inventory_out(), and get_velocity_report() methods. 19 tests covering auth, API calls, token refresh, and error handling.
 
-- [ ] **Task 1.3.2**: Implement GET /inventory/sellable endpoint
+- [x] **Task 1.3.2**: Implement GET /inventory/sellable endpoint
   - Spec: specs/02-winedirect-integration.md
   - Acceptance: Returns inventory positions for all 4 SKUs
+  - Completed: 2026-02-03
+  - Notes: Created FastAPI endpoint GET /inventory/sellable that fetches inventory from WineDirect API and filters to tracked SKUs. Also added GET /inventory/sellable/{sku} for single SKU lookup. Created src/main.py FastAPI application entry point. 11 tests covering success, auth errors, API errors, and alternative field names.
 
 - [ ] **Task 1.3.3**: Implement GET /inventory-out endpoint for depletions
   - Spec: specs/02-winedirect-integration.md
