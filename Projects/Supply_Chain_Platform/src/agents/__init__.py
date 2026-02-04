@@ -13,6 +13,7 @@ from src.agents.procurement import (
     compile_workflow,
     create_initial_state,
     demand_forecaster,
+    demand_forecaster_async,
     generate_purchase_order,
     human_approval,
     inventory_optimizer,
@@ -35,6 +36,7 @@ __all__ = [
     "CONFIDENCE_THRESHOLDS",
     # Agent nodes
     "demand_forecaster",
+    "demand_forecaster_async",
     "inventory_optimizer",
     "vendor_analyzer",
     "human_approval",

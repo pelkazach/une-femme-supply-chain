@@ -11,6 +11,7 @@ Key features:
 - Workflow interrupt/resume/rewind support
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -19,6 +20,9 @@ from uuid import UUID
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 
 class ApprovalStatus(str, Enum):
@@ -192,10 +196,10 @@ CONFIDENCE_THRESHOLDS = {
 
 
 def demand_forecaster(state: ProcurementState) -> dict[str, Any]:
-    """Generate demand forecast using Prophet.
+    """Generate demand forecast using Prophet (sync wrapper).
 
-    This agent node calls the Prophet forecasting service to generate
-    a 26-week demand forecast for the specified SKU.
+    This is a synchronous wrapper that returns placeholder data.
+    For actual forecasting with database access, use demand_forecaster_async.
 
     Args:
         state: Current procurement state with sku_id
@@ -206,8 +210,7 @@ def demand_forecaster(state: ProcurementState) -> dict[str, Any]:
     sku_id = state.get("sku_id", "")
     sku = state.get("sku", "")
 
-    # Placeholder: In production, this calls the forecast service
-    # forecast = await train_forecast_model_for_sku(session, sku_id)
+    # Placeholder: In production, use demand_forecaster_async with a session
     forecast: list[dict[str, Any]] = []
     forecast_confidence = 0.85  # Placeholder confidence
 
@@ -227,6 +230,264 @@ def demand_forecaster(state: ProcurementState) -> dict[str, Any]:
 
     return {
         "forecast": forecast,
+        "forecast_confidence": forecast_confidence,
+        "workflow_status": WorkflowStatus.OPTIMIZING.value,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "audit_log": [audit_entry],
+    }
+
+
+async def demand_forecaster_async(
+    state: ProcurementState,
+    session: AsyncSession,
+) -> dict[str, Any]:
+    """Generate demand forecast using Prophet (async with database).
+
+    This agent node calls the Prophet forecasting service to generate
+    a 26-week demand forecast for the specified SKU. It retrieves
+    historical depletion data from the database and trains a Prophet
+    model with wine industry holidays and multiplicative seasonality.
+
+    Args:
+        state: Current procurement state with sku_id
+        session: Async database session for retrieving training data
+
+    Returns:
+        Updated state with forecast data and confidence score
+
+    Note:
+        - Requires minimum 2 years (104 weeks) of training data
+        - Uses multiplicative seasonality for champagne's holiday spikes
+        - Returns 80% confidence intervals by default
+        - Confidence score is derived from model MAPE (1 - MAPE)
+    """
+    import uuid as uuid_module
+
+    from src.services.forecast import (
+        DEFAULT_FORECAST_WEEKS,
+        MIN_TRAINING_DAYS,
+        TARGET_MAPE,
+        get_training_data,
+        train_forecast_model_for_sku,
+    )
+
+    sku_id_str = state.get("sku_id", "")
+    sku = state.get("sku", "")
+
+    # Parse SKU ID as UUID
+    try:
+        sku_uuid = uuid_module.UUID(sku_id_str)
+    except (ValueError, TypeError) as e:
+        logger.error(f"Invalid SKU ID format: {sku_id_str}: {e}")
+        return _create_forecast_error_response(
+            sku_id_str,
+            sku,
+            f"Invalid SKU ID format: {sku_id_str}",
+        )
+
+    # Check if we have enough training data
+    try:
+        training_df = await get_training_data(session, sku_uuid)
+        training_data_days = len(training_df)
+
+        if training_data_days < MIN_TRAINING_DAYS:
+            logger.warning(
+                f"Insufficient training data for SKU {sku}: "
+                f"{training_data_days} days, need {MIN_TRAINING_DAYS}"
+            )
+            return _create_insufficient_data_response(
+                sku_id_str,
+                sku,
+                training_data_days,
+                MIN_TRAINING_DAYS,
+            )
+    except Exception as e:
+        logger.error(f"Error fetching training data for SKU {sku}: {e}")
+        return _create_forecast_error_response(
+            sku_id_str,
+            sku,
+            f"Error fetching training data: {e}",
+        )
+
+    # Train model and generate forecast
+    try:
+        model, forecast_result, performance = await train_forecast_model_for_sku(
+            session=session,
+            sku_id=sku_uuid,
+            validate=True,
+        )
+
+        # Convert forecast points to dict format for state
+        forecast_list = [
+            {
+                "week": i + 1,
+                "date": fp.ds.isoformat(),
+                "yhat": fp.yhat,
+                "yhat_lower": fp.yhat_lower,
+                "yhat_upper": fp.yhat_upper,
+            }
+            for i, fp in enumerate(forecast_result.forecasts)
+        ]
+
+        # Calculate confidence score from model performance
+        # Confidence = 1 - MAPE, bounded between 0 and 1
+        if performance is not None:
+            # MAPE is typically 0-1 (0% to 100%), so 1 - MAPE gives confidence
+            # If MAPE > 1, model is very poor, so clamp confidence to 0
+            mape = min(performance.mape, 1.0)
+            forecast_confidence = max(0.0, 1.0 - mape)
+
+            # Adjust confidence if MAPE exceeds target
+            if performance.mape > TARGET_MAPE:
+                logger.warning(
+                    f"Model MAPE ({performance.mape:.2%}) exceeds target "
+                    f"({TARGET_MAPE:.0%}) for SKU {sku}"
+                )
+        else:
+            # No validation performed, use conservative estimate
+            forecast_confidence = 0.75
+
+        reasoning = (
+            f"Generated {DEFAULT_FORECAST_WEEKS}-week demand forecast for SKU {sku}. "
+            f"Training data: {forecast_result.training_data_points} days "
+            f"({forecast_result.training_data_start} to {forecast_result.training_data_end}). "
+        )
+
+        if performance is not None:
+            reasoning += (
+                f"Model MAPE: {performance.mape:.2%}, RMSE: {performance.rmse:.1f}. "
+            )
+
+        reasoning += f"Forecast confidence: {forecast_confidence:.0%}."
+
+        audit_entry = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "agent": "demand_forecaster",
+            "action": "generate_forecast",
+            "reasoning": reasoning,
+            "inputs": {
+                "sku_id": sku_id_str,
+                "sku": sku,
+                "training_data_days": forecast_result.training_data_points,
+            },
+            "outputs": {
+                "forecast_periods": len(forecast_list),
+                "forecast_confidence": forecast_confidence,
+                "mape": performance.mape if performance else None,
+                "rmse": performance.rmse if performance else None,
+            },
+            "confidence": forecast_confidence,
+        }
+
+        return {
+            "forecast": forecast_list,
+            "forecast_confidence": forecast_confidence,
+            "workflow_status": WorkflowStatus.OPTIMIZING.value,
+            "updated_at": datetime.now(UTC).isoformat(),
+            "audit_log": [audit_entry],
+        }
+
+    except ValueError as e:
+        # Insufficient training data or other validation error
+        logger.error(f"Forecast validation error for SKU {sku}: {e}")
+        return _create_forecast_error_response(sku_id_str, sku, str(e))
+
+    except Exception as e:
+        logger.error(f"Forecast generation failed for SKU {sku}: {e}")
+        return _create_forecast_error_response(
+            sku_id_str,
+            sku,
+            f"Forecast generation failed: {e}",
+        )
+
+
+def _create_forecast_error_response(
+    sku_id: str,
+    sku: str,
+    error_message: str,
+) -> dict[str, Any]:
+    """Create an error response for failed forecast generation.
+
+    Args:
+        sku_id: SKU UUID string
+        sku: SKU code
+        error_message: Description of the error
+
+    Returns:
+        State update dict with error information
+    """
+    audit_entry = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "agent": "demand_forecaster",
+        "action": "forecast_error",
+        "reasoning": f"Forecast generation failed for SKU {sku}: {error_message}",
+        "inputs": {"sku_id": sku_id, "sku": sku},
+        "outputs": {"error": error_message},
+        "confidence": 0.0,
+    }
+
+    return {
+        "forecast": [],
+        "forecast_confidence": 0.0,
+        "workflow_status": WorkflowStatus.FAILED.value,
+        "error_message": error_message,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "audit_log": [audit_entry],
+    }
+
+
+def _create_insufficient_data_response(
+    sku_id: str,
+    sku: str,
+    available_days: int,
+    required_days: int,
+) -> dict[str, Any]:
+    """Create a response for insufficient training data.
+
+    This returns a low-confidence state that allows the workflow
+    to continue with human review rather than failing outright.
+
+    Args:
+        sku_id: SKU UUID string
+        sku: SKU code
+        available_days: Number of training data days available
+        required_days: Minimum required training data days
+
+    Returns:
+        State update dict with low confidence (triggers human review)
+    """
+    # Calculate a proportional confidence based on available data
+    # More data = higher confidence, capped at 0.60 (below high threshold)
+    data_ratio = available_days / required_days
+    forecast_confidence = min(0.60, data_ratio * 0.60)
+
+    reasoning = (
+        f"Insufficient training data for SKU {sku}. "
+        f"Available: {available_days} days, required: {required_days} days. "
+        f"Proceeding with low confidence ({forecast_confidence:.0%}) to trigger human review."
+    )
+
+    audit_entry = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "agent": "demand_forecaster",
+        "action": "insufficient_data",
+        "reasoning": reasoning,
+        "inputs": {
+            "sku_id": sku_id,
+            "sku": sku,
+            "available_days": available_days,
+            "required_days": required_days,
+        },
+        "outputs": {
+            "forecast_periods": 0,
+            "forecast_confidence": forecast_confidence,
+            "data_ratio": data_ratio,
+        },
+        "confidence": forecast_confidence,
+    }
+
+    return {
+        "forecast": [],
         "forecast_confidence": forecast_confidence,
         "workflow_status": WorkflowStatus.OPTIMIZING.value,
         "updated_at": datetime.now(UTC).isoformat(),

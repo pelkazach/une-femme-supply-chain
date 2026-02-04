@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 39
+- Completed: 40
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -278,9 +278,11 @@
   - Completed: 2026-02-03
   - Notes: Created src/agents/procurement.py with LangGraph StateGraph for procurement workflow. Features include: ProcurementState TypedDict with all workflow data, agent nodes (demand_forecaster, inventory_optimizer, vendor_analyzer, human_approval, generate_purchase_order), conditional routing via should_require_approval() function implementing approval thresholds (<$5K+>85% confidence auto-approves, $5K-$10K manager review, >$10K executive review), audit trail with AuditLogEntry dataclass, workflow status tracking, compile_workflow() with optional checkpointer and interrupt_before support for HITL. 68 tests covering all components.
 
-- [ ] **Task 3.1.2**: Implement demand forecaster agent node
+- [x] **Task 3.1.2**: Implement demand forecaster agent node
   - Spec: specs/09-agentic-automation.md
   - Acceptance: Node calls Prophet and returns forecast
+  - Completed: 2026-02-03
+  - Notes: Created demand_forecaster_async() function that integrates with Prophet forecasting service. Features include: database retrieval of training data via get_training_data(), model training via train_forecast_model_for_sku(), 26-week forecast generation with confidence intervals, confidence score calculation from MAPE (1 - MAPE), handling of insufficient training data (<728 days) with low-confidence response triggering human review, comprehensive error handling with audit logging, forecast output in state-compatible format (week, date, yhat, yhat_lower, yhat_upper). Helper functions _create_forecast_error_response() and _create_insufficient_data_response() for different error scenarios. 21 new tests covering success path, error handling, confidence calculations, and edge cases.
 
 - [ ] **Task 3.1.3**: Implement inventory optimizer agent node
   - Spec: specs/09-agentic-automation.md

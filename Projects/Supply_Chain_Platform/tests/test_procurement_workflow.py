@@ -1,6 +1,8 @@
 """Tests for the LangGraph procurement workflow state machine."""
 
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -13,10 +15,13 @@ from src.agents.procurement import (
     ProcurementState,
     VendorInfo,
     WorkflowStatus,
+    _create_forecast_error_response,
+    _create_insufficient_data_response,
     build_procurement_workflow,
     compile_workflow,
     create_initial_state,
     demand_forecaster,
+    demand_forecaster_async,
     generate_purchase_order,
     human_approval,
     inventory_optimizer,
@@ -782,3 +787,553 @@ class TestWorkflowStateUpdates:
         # Should have data from both agents
         assert "forecast" in merged
         assert "safety_stock" in result2
+
+
+class TestCreateForecastErrorResponse:
+    """Tests for _create_forecast_error_response helper."""
+
+    def test_returns_empty_forecast(self) -> None:
+        """Test that error response has empty forecast."""
+        result = _create_forecast_error_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            error_message="Test error",
+        )
+        assert result["forecast"] == []
+
+    def test_sets_zero_confidence(self) -> None:
+        """Test that error response has zero confidence."""
+        result = _create_forecast_error_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            error_message="Test error",
+        )
+        assert result["forecast_confidence"] == 0.0
+
+    def test_sets_failed_status(self) -> None:
+        """Test that error response sets failed workflow status."""
+        result = _create_forecast_error_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            error_message="Test error",
+        )
+        assert result["workflow_status"] == WorkflowStatus.FAILED.value
+
+    def test_includes_error_message(self) -> None:
+        """Test that error response includes the error message."""
+        result = _create_forecast_error_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            error_message="Something went wrong",
+        )
+        assert result["error_message"] == "Something went wrong"
+
+    def test_creates_audit_entry(self) -> None:
+        """Test that error response creates audit log entry."""
+        result = _create_forecast_error_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            error_message="Test error",
+        )
+        assert len(result["audit_log"]) == 1
+        assert result["audit_log"][0]["agent"] == "demand_forecaster"
+        assert result["audit_log"][0]["action"] == "forecast_error"
+        assert result["audit_log"][0]["confidence"] == 0.0
+
+
+class TestCreateInsufficientDataResponse:
+    """Tests for _create_insufficient_data_response helper."""
+
+    def test_returns_empty_forecast(self) -> None:
+        """Test that insufficient data response has empty forecast."""
+        result = _create_insufficient_data_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            available_days=100,
+            required_days=728,
+        )
+        assert result["forecast"] == []
+
+    def test_calculates_proportional_confidence(self) -> None:
+        """Test that confidence is proportional to available data."""
+        result = _create_insufficient_data_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            available_days=364,  # Half of required
+            required_days=728,
+        )
+        # 364/728 * 0.60 = 0.30
+        assert result["forecast_confidence"] == pytest.approx(0.30)
+
+    def test_caps_confidence_at_60_percent(self) -> None:
+        """Test that confidence is capped at 60% (below high threshold)."""
+        result = _create_insufficient_data_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            available_days=800,  # More than required
+            required_days=728,
+        )
+        assert result["forecast_confidence"] == 0.60
+
+    def test_continues_workflow(self) -> None:
+        """Test that insufficient data continues to optimizing status."""
+        result = _create_insufficient_data_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            available_days=100,
+            required_days=728,
+        )
+        assert result["workflow_status"] == WorkflowStatus.OPTIMIZING.value
+
+    def test_creates_audit_entry(self) -> None:
+        """Test that insufficient data creates audit log entry."""
+        result = _create_insufficient_data_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            available_days=100,
+            required_days=728,
+        )
+        assert len(result["audit_log"]) == 1
+        assert result["audit_log"][0]["agent"] == "demand_forecaster"
+        assert result["audit_log"][0]["action"] == "insufficient_data"
+
+    def test_includes_data_ratio_in_outputs(self) -> None:
+        """Test that audit log includes data ratio calculation."""
+        result = _create_insufficient_data_response(
+            sku_id="test-id",
+            sku="UFBub250",
+            available_days=182,  # 25% of required
+            required_days=728,
+        )
+        assert result["audit_log"][0]["outputs"]["data_ratio"] == pytest.approx(0.25)
+
+
+class TestDemandForecasterAsync:
+    """Tests for demand_forecaster_async function."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_sku_id_format(self) -> None:
+        """Test handling of invalid SKU ID format."""
+        state = create_initial_state(
+            sku_id="not-a-valid-uuid",
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        result = await demand_forecaster_async(state, mock_session)
+
+        assert result["workflow_status"] == WorkflowStatus.FAILED.value
+        assert "Invalid SKU ID format" in result["error_message"]
+        assert result["forecast"] == []
+        assert result["forecast_confidence"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_insufficient_training_data(self) -> None:
+        """Test handling of insufficient training data."""
+        import pandas as pd
+
+        sku_id = str(uuid4())
+        state = create_initial_state(
+            sku_id=sku_id,
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        # Mock get_training_data to return insufficient data (100 days < 728 required)
+        with patch("src.services.forecast.get_training_data") as mock_get_data:
+            mock_df = pd.DataFrame({
+                "ds": pd.date_range("2024-01-01", periods=100),
+                "y": [10] * 100,
+            })
+            mock_get_data.return_value = mock_df
+
+            result = await demand_forecaster_async(state, mock_session)
+
+        # Should return low confidence response, not fail
+        assert result["workflow_status"] == WorkflowStatus.OPTIMIZING.value
+        assert result["forecast_confidence"] < 0.60  # Below high threshold
+        assert result["forecast"] == []
+        assert result["audit_log"][0]["action"] == "insufficient_data"
+
+    @pytest.mark.asyncio
+    async def test_successful_forecast_generation(self) -> None:
+        """Test successful forecast generation with Prophet."""
+        import pandas as pd
+        from datetime import datetime as dt
+
+        from src.services.forecast import ForecastPoint, ForecastResult, ModelPerformance
+
+        sku_id = uuid4()
+        state = create_initial_state(
+            sku_id=str(sku_id),
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        # Mock training data with sufficient data
+        with patch("src.services.forecast.get_training_data") as mock_get_data, \
+             patch("src.services.forecast.train_forecast_model_for_sku") as mock_train:
+
+            # Sufficient training data (730 days)
+            mock_df = pd.DataFrame({
+                "ds": pd.date_range("2022-01-01", periods=730),
+                "y": [100 + i % 7 for i in range(730)],
+            })
+            mock_get_data.return_value = mock_df
+
+            # Mock forecast result
+            from datetime import timedelta
+            base_date = dt(2024, 7, 1)
+            mock_forecasts = [
+                ForecastPoint(
+                    ds=base_date + timedelta(weeks=i),
+                    yhat=100.0 + i,
+                    yhat_lower=80.0 + i,
+                    yhat_upper=120.0 + i,
+                )
+                for i in range(26)
+            ]
+            mock_result = ForecastResult(
+                sku="UFBub250",
+                sku_id=sku_id,
+                forecasts=mock_forecasts,
+                model_trained_at=dt.now(),
+                training_data_start=dt(2022, 1, 1).date(),
+                training_data_end=dt(2024, 1, 1).date(),
+                training_data_points=730,
+            )
+            mock_performance = ModelPerformance(
+                sku="UFBub250",
+                mape=0.08,  # 8% MAPE
+                rmse=15.0,
+                mae=12.0,
+                coverage=0.80,
+                horizon_days=90,
+            )
+            mock_train.return_value = (MagicMock(), mock_result, mock_performance)
+
+            result = await demand_forecaster_async(state, mock_session)
+
+        assert result["workflow_status"] == WorkflowStatus.OPTIMIZING.value
+        assert len(result["forecast"]) == 26
+        assert result["forecast_confidence"] == pytest.approx(0.92)  # 1 - 0.08
+        assert result["audit_log"][0]["action"] == "generate_forecast"
+
+    @pytest.mark.asyncio
+    async def test_forecast_confidence_from_mape(self) -> None:
+        """Test that forecast confidence is calculated from MAPE."""
+        import pandas as pd
+        from datetime import datetime as dt
+
+        from src.services.forecast import ForecastPoint, ForecastResult, ModelPerformance
+
+        sku_id = uuid4()
+        state = create_initial_state(
+            sku_id=str(sku_id),
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        with patch("src.services.forecast.get_training_data") as mock_get_data, \
+             patch("src.services.forecast.train_forecast_model_for_sku") as mock_train:
+
+            mock_df = pd.DataFrame({
+                "ds": pd.date_range("2022-01-01", periods=730),
+                "y": [100] * 730,
+            })
+            mock_get_data.return_value = mock_df
+
+            # Test with 15% MAPE (above target but still reasonable)
+            mock_forecasts = [
+                ForecastPoint(ds=dt(2024, 7, 1), yhat=100.0, yhat_lower=80.0, yhat_upper=120.0)
+            ]
+            mock_result = ForecastResult(
+                sku="UFBub250",
+                sku_id=sku_id,
+                forecasts=mock_forecasts,
+                model_trained_at=dt.now(),
+                training_data_start=dt(2022, 1, 1).date(),
+                training_data_end=dt(2024, 1, 1).date(),
+                training_data_points=730,
+            )
+            mock_performance = ModelPerformance(
+                sku="UFBub250",
+                mape=0.15,  # 15% MAPE
+                rmse=20.0,
+                mae=15.0,
+                coverage=0.75,
+                horizon_days=90,
+            )
+            mock_train.return_value = (MagicMock(), mock_result, mock_performance)
+
+            result = await demand_forecaster_async(state, mock_session)
+
+        # Confidence should be 1 - 0.15 = 0.85
+        assert result["forecast_confidence"] == pytest.approx(0.85)
+
+    @pytest.mark.asyncio
+    async def test_high_mape_capped_confidence(self) -> None:
+        """Test that very high MAPE results in capped confidence."""
+        import pandas as pd
+        from datetime import datetime as dt
+
+        from src.services.forecast import ForecastPoint, ForecastResult, ModelPerformance
+
+        sku_id = uuid4()
+        state = create_initial_state(
+            sku_id=str(sku_id),
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        with patch("src.services.forecast.get_training_data") as mock_get_data, \
+             patch("src.services.forecast.train_forecast_model_for_sku") as mock_train:
+
+            mock_df = pd.DataFrame({
+                "ds": pd.date_range("2022-01-01", periods=730),
+                "y": [100] * 730,
+            })
+            mock_get_data.return_value = mock_df
+
+            mock_forecasts = [
+                ForecastPoint(ds=dt(2024, 7, 1), yhat=100.0, yhat_lower=80.0, yhat_upper=120.0)
+            ]
+            mock_result = ForecastResult(
+                sku="UFBub250",
+                sku_id=sku_id,
+                forecasts=mock_forecasts,
+                model_trained_at=dt.now(),
+                training_data_start=dt(2022, 1, 1).date(),
+                training_data_end=dt(2024, 1, 1).date(),
+                training_data_points=730,
+            )
+            # Very poor model with MAPE > 100%
+            mock_performance = ModelPerformance(
+                sku="UFBub250",
+                mape=1.5,  # 150% MAPE
+                rmse=200.0,
+                mae=150.0,
+                coverage=0.30,
+                horizon_days=90,
+            )
+            mock_train.return_value = (MagicMock(), mock_result, mock_performance)
+
+            result = await demand_forecaster_async(state, mock_session)
+
+        # Confidence should be clamped to 0
+        assert result["forecast_confidence"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_no_validation_uses_conservative_confidence(self) -> None:
+        """Test that no validation results in conservative confidence estimate."""
+        import pandas as pd
+        from datetime import datetime as dt
+
+        from src.services.forecast import ForecastPoint, ForecastResult
+
+        sku_id = uuid4()
+        state = create_initial_state(
+            sku_id=str(sku_id),
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        with patch("src.services.forecast.get_training_data") as mock_get_data, \
+             patch("src.services.forecast.train_forecast_model_for_sku") as mock_train:
+
+            mock_df = pd.DataFrame({
+                "ds": pd.date_range("2022-01-01", periods=730),
+                "y": [100] * 730,
+            })
+            mock_get_data.return_value = mock_df
+
+            mock_forecasts = [
+                ForecastPoint(ds=dt(2024, 7, 1), yhat=100.0, yhat_lower=80.0, yhat_upper=120.0)
+            ]
+            mock_result = ForecastResult(
+                sku="UFBub250",
+                sku_id=sku_id,
+                forecasts=mock_forecasts,
+                model_trained_at=dt.now(),
+                training_data_start=dt(2022, 1, 1).date(),
+                training_data_end=dt(2024, 1, 1).date(),
+                training_data_points=730,
+            )
+            # No performance metrics (validation skipped)
+            mock_train.return_value = (MagicMock(), mock_result, None)
+
+            result = await demand_forecaster_async(state, mock_session)
+
+        # Should use conservative 75% confidence
+        assert result["forecast_confidence"] == 0.75
+
+    @pytest.mark.asyncio
+    async def test_training_error_handled(self) -> None:
+        """Test that training errors are handled gracefully."""
+        import pandas as pd
+
+        sku_id = str(uuid4())
+        state = create_initial_state(
+            sku_id=sku_id,
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        with patch("src.services.forecast.get_training_data") as mock_get_data, \
+             patch("src.services.forecast.train_forecast_model_for_sku") as mock_train:
+
+            mock_df = pd.DataFrame({
+                "ds": pd.date_range("2022-01-01", periods=730),
+                "y": [100] * 730,
+            })
+            mock_get_data.return_value = mock_df
+            mock_train.side_effect = Exception("Prophet training failed")
+
+            result = await demand_forecaster_async(state, mock_session)
+
+        assert result["workflow_status"] == WorkflowStatus.FAILED.value
+        assert "Forecast generation failed" in result["error_message"]
+        assert result["forecast_confidence"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_data_fetch_error_handled(self) -> None:
+        """Test that data fetching errors are handled gracefully."""
+        sku_id = str(uuid4())
+        state = create_initial_state(
+            sku_id=sku_id,
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        with patch("src.services.forecast.get_training_data") as mock_get_data:
+            mock_get_data.side_effect = Exception("Database connection failed")
+
+            result = await demand_forecaster_async(state, mock_session)
+
+        assert result["workflow_status"] == WorkflowStatus.FAILED.value
+        assert "Error fetching training data" in result["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_forecast_format_correct(self) -> None:
+        """Test that forecast output format matches state requirements."""
+        import pandas as pd
+        from datetime import datetime as dt
+
+        from src.services.forecast import ForecastPoint, ForecastResult, ModelPerformance
+
+        sku_id = uuid4()
+        state = create_initial_state(
+            sku_id=str(sku_id),
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        with patch("src.services.forecast.get_training_data") as mock_get_data, \
+             patch("src.services.forecast.train_forecast_model_for_sku") as mock_train:
+
+            mock_df = pd.DataFrame({
+                "ds": pd.date_range("2022-01-01", periods=730),
+                "y": [100] * 730,
+            })
+            mock_get_data.return_value = mock_df
+
+            mock_forecasts = [
+                ForecastPoint(
+                    ds=dt(2024, 7, 1),
+                    yhat=105.5,
+                    yhat_lower=85.0,
+                    yhat_upper=126.0,
+                )
+            ]
+            mock_result = ForecastResult(
+                sku="UFBub250",
+                sku_id=sku_id,
+                forecasts=mock_forecasts,
+                model_trained_at=dt.now(),
+                training_data_start=dt(2022, 1, 1).date(),
+                training_data_end=dt(2024, 1, 1).date(),
+                training_data_points=730,
+            )
+            mock_performance = ModelPerformance(
+                sku="UFBub250",
+                mape=0.10,
+                rmse=15.0,
+                mae=12.0,
+                coverage=0.80,
+                horizon_days=90,
+            )
+            mock_train.return_value = (MagicMock(), mock_result, mock_performance)
+
+            result = await demand_forecaster_async(state, mock_session)
+
+        # Check forecast format
+        assert len(result["forecast"]) == 1
+        forecast_point = result["forecast"][0]
+        assert forecast_point["week"] == 1
+        assert "date" in forecast_point  # ISO format string
+        assert forecast_point["yhat"] == 105.5
+        assert forecast_point["yhat_lower"] == 85.0
+        assert forecast_point["yhat_upper"] == 126.0
+
+    @pytest.mark.asyncio
+    async def test_audit_log_includes_metrics(self) -> None:
+        """Test that audit log includes model performance metrics."""
+        import pandas as pd
+        from datetime import datetime as dt
+
+        from src.services.forecast import ForecastPoint, ForecastResult, ModelPerformance
+
+        sku_id = uuid4()
+        state = create_initial_state(
+            sku_id=str(sku_id),
+            sku="UFBub250",
+            current_inventory=100,
+        )
+        mock_session = AsyncMock()
+
+        with patch("src.services.forecast.get_training_data") as mock_get_data, \
+             patch("src.services.forecast.train_forecast_model_for_sku") as mock_train:
+
+            mock_df = pd.DataFrame({
+                "ds": pd.date_range("2022-01-01", periods=730),
+                "y": [100] * 730,
+            })
+            mock_get_data.return_value = mock_df
+
+            mock_forecasts = [
+                ForecastPoint(ds=dt(2024, 7, 1), yhat=100.0, yhat_lower=80.0, yhat_upper=120.0)
+            ]
+            mock_result = ForecastResult(
+                sku="UFBub250",
+                sku_id=sku_id,
+                forecasts=mock_forecasts,
+                model_trained_at=dt.now(),
+                training_data_start=dt(2022, 1, 1).date(),
+                training_data_end=dt(2024, 1, 1).date(),
+                training_data_points=730,
+            )
+            mock_performance = ModelPerformance(
+                sku="UFBub250",
+                mape=0.10,
+                rmse=15.0,
+                mae=12.0,
+                coverage=0.80,
+                horizon_days=90,
+            )
+            mock_train.return_value = (MagicMock(), mock_result, mock_performance)
+
+            result = await demand_forecaster_async(state, mock_session)
+
+        audit_entry = result["audit_log"][0]
+        assert audit_entry["outputs"]["mape"] == 0.10
+        assert audit_entry["outputs"]["rmse"] == 15.0
+        assert audit_entry["inputs"]["training_data_days"] == 730
