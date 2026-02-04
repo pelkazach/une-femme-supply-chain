@@ -119,9 +119,11 @@
   - Completed: 2026-02-03
   - Notes: Created src/services/metrics.py with calculate_doh_t30() pure function. Formula: DOH_T30 = current_inventory / (depletion_30d / 30). Returns None for zero depletion (cannot calculate DOH with no sales). Added supporting functions: get_current_inventory() (handles snapshot + delta calculation), get_depletion_total() (sums depletions with optional warehouse/distributor filters), calculate_doh_t30_for_sku() (full SKU metrics), calculate_doh_t30_all_skus() (all 4 SKUs). DOHMetrics frozen dataclass stores results. 30 tests covering all acceptance criteria including 1% variance verification.
 
-- [ ] **Task 1.5.2**: Implement DOH_T90 calculation function
+- [x] **Task 1.5.2**: Implement DOH_T90 calculation function
   - Spec: specs/04-inventory-metrics.md
   - Acceptance: Matches Excel formula within 1% variance
+  - Completed: 2026-02-03
+  - Notes: Created calculate_doh_t90() pure function with same pattern as calculate_doh_t30(). Formula: DOH_T90 = current_inventory / (depletion_90d / 90). Returns None for zero depletion. Extended DOHMetrics dataclass to include doh_t90, depletion_90d, and daily_rate_90d fields. Updated calculate_doh_t30_for_sku() to calculate both T30 and T90 metrics. Added calculate_doh_t90_for_sku() and calculate_doh_t90_all_skus() as semantic aliases. 14 new tests covering T90 calculation, 1% variance verification, and comparison with T30 for seasonal smoothing.
 
 - [ ] **Task 1.5.3**: Implement A30_Ship:A30_Dep ratio calculation
   - Spec: specs/04-inventory-metrics.md

@@ -32,6 +32,9 @@ class DOHMetrics:
         doh_t30: Days on hand based on 30-day depletion rate
         depletion_30d: Total depletions in last 30 days
         daily_rate_30d: Daily depletion rate (depletions / 30)
+        doh_t90: Days on hand based on 90-day depletion rate
+        depletion_90d: Total depletions in last 90 days
+        daily_rate_90d: Daily depletion rate (depletions / 90)
         calculated_at: Timestamp when metrics were calculated
     """
     sku: str
@@ -40,6 +43,9 @@ class DOHMetrics:
     doh_t30: MetricValue
     depletion_30d: int
     daily_rate_30d: MetricValue
+    doh_t90: MetricValue
+    depletion_90d: int
+    daily_rate_90d: MetricValue
     calculated_at: datetime
 
 
@@ -78,6 +84,49 @@ def calculate_doh_t30(
 
     # Calculate daily depletion rate
     daily_rate = depletion_30d / 30.0
+
+    # Calculate days on hand
+    doh = current_inventory / daily_rate
+
+    return doh
+
+
+def calculate_doh_t90(
+    current_inventory: int,
+    depletion_90d: int,
+) -> MetricValue:
+    """Calculate Days on Hand based on trailing 90-day depletion rate.
+
+    Formula: DOH_T90 = current_inventory / (depletion_90d / 90)
+
+    This metric tells you how many days of inventory remain if sales
+    continue at the trailing 90-day average rate. Using a longer period
+    smooths out short-term fluctuations and provides a more stable estimate.
+
+    Args:
+        current_inventory: Current inventory quantity (units on hand)
+        depletion_90d: Total units depleted in the last 90 days
+
+    Returns:
+        Days on hand as a float, or None if depletion rate is zero
+        (cannot calculate days on hand with no sales)
+
+    Examples:
+        >>> calculate_doh_t90(1000, 900)  # 1000 units, 900 sold in 90d
+        100.0  # 1000 / (900/90) = 1000 / 10 = 100 days
+
+        >>> calculate_doh_t90(1000, 4500)  # 1000 units, 4500 sold in 90d
+        20.0  # 1000 / (4500/90) = 1000 / 50 = 20 days
+
+        >>> calculate_doh_t90(1000, 0)  # No sales
+        None  # Cannot calculate - division by zero
+    """
+    if depletion_90d <= 0:
+        # Cannot calculate days on hand with zero or negative depletions
+        return None
+
+    # Calculate daily depletion rate
+    daily_rate = depletion_90d / 90.0
 
     # Calculate days on hand
     doh = current_inventory / daily_rate
@@ -246,7 +295,7 @@ async def calculate_doh_t30_for_sku(
     warehouse_id: UUID | None = None,
     as_of: datetime | None = None,
 ) -> DOHMetrics:
-    """Calculate DOH_T30 metrics for a specific SKU.
+    """Calculate DOH_T30 and DOH_T90 metrics for a specific SKU.
 
     Args:
         session: Database session
@@ -255,7 +304,7 @@ async def calculate_doh_t30_for_sku(
         as_of: Calculate as of this time (default: now)
 
     Returns:
-        DOHMetrics with calculated values
+        DOHMetrics with calculated values for both T30 and T90
     """
     if as_of is None:
         as_of = datetime.now(UTC)
@@ -273,9 +322,16 @@ async def calculate_doh_t30_for_sku(
         session, sku_id, days=30, warehouse_id=warehouse_id, as_of=as_of
     )
 
-    # Calculate DOH
+    # Get 90-day depletions
+    depletion_90d = await get_depletion_total(
+        session, sku_id, days=90, warehouse_id=warehouse_id, as_of=as_of
+    )
+
+    # Calculate DOH for both periods
     doh_t30 = calculate_doh_t30(current_inventory, depletion_30d)
-    daily_rate = calculate_daily_depletion_rate(depletion_30d, 30)
+    daily_rate_30d = calculate_daily_depletion_rate(depletion_30d, 30)
+    doh_t90 = calculate_doh_t90(current_inventory, depletion_90d)
+    daily_rate_90d = calculate_daily_depletion_rate(depletion_90d, 90)
 
     return DOHMetrics(
         sku=product.sku,
@@ -283,9 +339,36 @@ async def calculate_doh_t30_for_sku(
         current_inventory=current_inventory,
         doh_t30=doh_t30,
         depletion_30d=depletion_30d,
-        daily_rate_30d=daily_rate,
+        daily_rate_30d=daily_rate_30d,
+        doh_t90=doh_t90,
+        depletion_90d=depletion_90d,
+        daily_rate_90d=daily_rate_90d,
         calculated_at=as_of,
     )
+
+
+async def calculate_doh_t90_for_sku(
+    session: AsyncSession,
+    sku_id: UUID,
+    warehouse_id: UUID | None = None,
+    as_of: datetime | None = None,
+) -> DOHMetrics:
+    """Calculate DOH_T90 metrics for a specific SKU.
+
+    This is an alias for calculate_doh_t30_for_sku, which calculates both
+    T30 and T90 metrics. Use this for semantic clarity when you specifically
+    need T90 metrics.
+
+    Args:
+        session: Database session
+        sku_id: Product SKU UUID
+        warehouse_id: Optional warehouse filter
+        as_of: Calculate as of this time (default: now)
+
+    Returns:
+        DOHMetrics with calculated values for both T30 and T90
+    """
+    return await calculate_doh_t30_for_sku(session, sku_id, warehouse_id, as_of)
 
 
 async def calculate_doh_t30_all_skus(
@@ -293,7 +376,7 @@ async def calculate_doh_t30_all_skus(
     warehouse_id: UUID | None = None,
     as_of: datetime | None = None,
 ) -> list[DOHMetrics]:
-    """Calculate DOH_T30 metrics for all tracked SKUs.
+    """Calculate DOH_T30 and DOH_T90 metrics for all tracked SKUs.
 
     Args:
         session: Database session
@@ -301,7 +384,7 @@ async def calculate_doh_t30_all_skus(
         as_of: Calculate as of this time (default: now)
 
     Returns:
-        List of DOHMetrics for each SKU
+        List of DOHMetrics for each SKU (includes both T30 and T90)
     """
     if as_of is None:
         as_of = datetime.now(UTC)
@@ -319,3 +402,25 @@ async def calculate_doh_t30_all_skus(
         metrics.append(sku_metrics)
 
     return metrics
+
+
+async def calculate_doh_t90_all_skus(
+    session: AsyncSession,
+    warehouse_id: UUID | None = None,
+    as_of: datetime | None = None,
+) -> list[DOHMetrics]:
+    """Calculate DOH_T90 metrics for all tracked SKUs.
+
+    This is an alias for calculate_doh_t30_all_skus, which calculates both
+    T30 and T90 metrics. Use this for semantic clarity when you specifically
+    need T90 metrics.
+
+    Args:
+        session: Database session
+        warehouse_id: Optional warehouse filter
+        as_of: Calculate as of this time (default: now)
+
+    Returns:
+        List of DOHMetrics for each SKU (includes both T30 and T90)
+    """
+    return await calculate_doh_t30_all_skus(session, warehouse_id, as_of)
