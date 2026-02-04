@@ -220,9 +220,11 @@
   - Notes: Created SQL queries for forecast visualization: forecast_overview.sql (26-week forecasts with confidence intervals for all SKUs), forecast_by_sku.sql (single SKU with parameter), forecast_vs_actuals.sql (compare historical forecasts to actual depletions). Added setup_forecast_queries() and setup_forecast_visualizations() functions to Redash setup script. Line charts with datetime x-axis for time series visualization. 35 new tests covering SQL queries, script functions, and visualization configuration.
 
 ### Priority 2.2: Email Classification
-- [ ] **Task 2.2.1**: Implement Gmail API OAuth connection
+- [x] **Task 2.2.1**: Implement Gmail API OAuth connection
   - Spec: specs/07-email-classification.md
   - Acceptance: OAuth flow completes, token stored
+  - Completed: 2026-02-03
+  - Notes: Created src/services/gmail.py with GmailClient class implementing OAuth 2.0 authentication. Features include: interactive OAuth flow via InstalledAppFlow, token persistence (save/load from JSON file), automatic token refresh with RefreshError handling, Gmail API methods (list_messages, get_message, get_attachment, get_labels, get_profile), EmailMessage and EmailAttachment dataclasses for parsed responses. Added Gmail settings to config.py (gmail_credentials_file, gmail_token_file, gmail_scopes). Added google-auth, google-auth-oauthlib, and google-api-python-client dependencies. 26 tests covering auth, token management, API calls, and error handling.
 
 - [ ] **Task 2.2.2**: Create email classification prompt with Ollama
   - Spec: specs/07-email-classification.md

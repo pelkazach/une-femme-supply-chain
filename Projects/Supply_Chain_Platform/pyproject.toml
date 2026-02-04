@@ -39,6 +39,9 @@ pydantic = "^2.10.0"
 pydantic-settings = "^2.7.0"
 python-dotenv = "^1.0.0"
 greenlet = "^3.3.1"
+google-auth = "^2.48.0"
+google-auth-oauthlib = "^1.2.4"
+google-api-python-client = "^2.189.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"
@@ -68,7 +71,17 @@ disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "prophet.*", "redis.*", "pandas.*", "openpyxl.*"]
+module = [
+    "celery.*",
+    "prophet.*",
+    "redis.*",
+    "pandas.*",
+    "openpyxl.*",
+    "google.*",
+    "google_auth_oauthlib.*",
+    "googleapiclient.*",
+    "requests",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     # Slack
     slack_webhook_url: str = ""
 
+    # Gmail API OAuth
+    gmail_credentials_file: str = "credentials.json"
+    gmail_token_file: str = "token.json"
+    gmail_scopes: list[str] = [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.labels",
+    ]
+
     # Application
     debug: bool = False
     api_host: str = "0.0.0.0"
