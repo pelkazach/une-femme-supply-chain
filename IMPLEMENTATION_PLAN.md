@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 30
+- Completed: 31
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -207,9 +207,11 @@
   - Completed: 2026-02-03
   - Notes: Created generate_forecast() function that produces weekly forecasts with configurable interval_width (default 80%, supports 95%). Returns DataFrame with ds, yhat, yhat_lower, yhat_upper columns. ForecastPoint and ForecastResult dataclasses provide structured results. train_forecast_model_for_sku() combines data retrieval, training, and forecast generation in one async function.
 
-- [ ] **Task 2.1.4**: Create weekly retraining Celery job
+- [x] **Task 2.1.4**: Create weekly retraining Celery job
   - Spec: specs/05-demand-forecasting.md
   - Acceptance: Job runs Mondays, updates forecasts table
+  - Completed: 2026-02-03
+  - Notes: Created src/tasks/forecast_retrain.py with retrain_forecasts Celery task that runs weekly on Mondays at 7 AM UTC. Task trains Prophet models for all 4 SKUs, generates 26-week forecasts, and stores results in new forecasts table. Created Forecast SQLAlchemy model with proper indexes. Created Alembic migration (a1b2c3d4e5f6) for forecasts table. Added beat schedule to celery_app.py. 23 new tests covering task functions, model, and schedule configuration.
 
 - [ ] **Task 2.1.5**: Add forecast visualization to Redash
   - Spec: specs/05-demand-forecasting.md

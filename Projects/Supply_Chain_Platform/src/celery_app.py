@@ -10,7 +10,7 @@ celery_app = Celery(
     "une_femme",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["src.tasks.winedirect_sync"],
+    include=["src.tasks.winedirect_sync", "src.tasks.forecast_retrain"],
 )
 
 # Celery configuration
@@ -34,6 +34,12 @@ celery_app.conf.update(
             "task": "src.tasks.winedirect_sync.sync_winedirect_inventory",
             # Run daily at 6 AM UTC (aligned with WineDirect Data Lake refresh)
             "schedule": crontab(hour=6, minute=0),
+            "options": {"queue": "default"},
+        },
+        "retrain-forecasts-weekly": {
+            "task": "src.tasks.forecast_retrain.retrain_forecasts",
+            # Run every Monday at 7 AM UTC (after WineDirect daily sync)
+            "schedule": crontab(hour=7, minute=0, day_of_week=1),
             "options": {"queue": "default"},
         },
     },
