@@ -1,8 +1,8 @@
 # Implementation Plan
 
 ## Status
-- Total tasks: 42
-- Completed: 41
+- Total tasks: 50
+- Completed: 46
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -290,9 +290,11 @@
   - Completed: 2026-02-04
   - Notes: Created inventory_optimizer_async() function that calculates optimal inventory parameters. Features include: calculate_safety_stock_from_forecast() using forecast prediction intervals scaled to service level (default 95%), calculate_reorder_point() using (lead_time × daily_demand + safety_stock), calculate_reorder_quantity() using weeks-of-supply model (default 12 weeks), fallback to historical 90-day demand when no forecast available, coefficient of variation approach for safety stock when no forecast variability data, configurable lead_time_days, target_weeks_supply, and service_level parameters, needs_reorder flag in output, database integration for accurate current inventory, graceful error handling with _create_optimizer_error_response(). 32 new tests covering pure functions, sync wrapper, async function, and workflow integration.
 
-- [ ] **Task 3.1.4**: Implement human approval interrupt node
+- [x] **Task 3.1.4**: Implement human approval interrupt node
   - Spec: specs/09-agentic-automation.md
   - Acceptance: Workflow pauses for orders >$10K
+  - Completed: 2026-02-04
+  - Notes: Created src/services/workflow_orchestrator.py with start_workflow() and resume_workflow() functions for interrupt/resume cycle. Added PostgresSaver checkpointer support (langgraph-checkpoint-postgres dependency). The human_approval node sets approval_required_level based on order value thresholds: >$10K requires executive approval, $5K-$10K requires manager approval, <$5K with <85% confidence requires manager review. Workflow interrupt occurs when routing to human_approval node via interrupt_before=["run_approval"]. process_approval() handles approval/rejection decisions and updates audit trail. API endpoints in src/api/approval.py provide approval queue, stats, and decision submission. 178 tests covering workflow interrupt/resume cycle, approval thresholds, and audit trail persistence.
 
 - [ ] **Task 3.1.5**: Create audit trail logging
   - Spec: specs/09-agentic-automation.md

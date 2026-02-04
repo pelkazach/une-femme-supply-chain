@@ -1023,31 +1023,40 @@ def human_approval(state: ProcurementState) -> dict[str, Any]:
     human review and approval. The workflow resumes when the human
     provides feedback via the workflow API.
 
+    When this node executes, LangGraph will interrupt the workflow
+    before moving to the next node if the workflow was compiled with
+    interrupt_before=["run_approval"]. The workflow can then be resumed
+    by calling process_approval() with the approval decision.
+
     Args:
         state: Current procurement state
 
     Returns:
-        State with approval status updated
+        State with approval status updated to PENDING and approval level set
     """
     order_value = state.get("order_value", 0.0)
     sku = state.get("sku", "")
     forecast_confidence = state.get("forecast_confidence", 0.0)
+    recommended_quantity = state.get("recommended_quantity", 0)
+    selected_vendor = state.get("selected_vendor", {})
 
-    # Determine required approval level
-    if order_value > APPROVAL_THRESHOLDS["executive_review"]:
-        approval_level = "executive"
-    elif (
-        order_value > APPROVAL_THRESHOLDS["auto_approve_max"]
-        or forecast_confidence < CONFIDENCE_THRESHOLDS["high"]
-    ):
-        approval_level = "manager"
-    else:
-        approval_level = "auto"
+    # Determine required approval level based on spec thresholds
+    approval_level = determine_approval_level(order_value, forecast_confidence)
 
     reasoning = (
         f"Order for SKU {sku} requires {approval_level} approval. "
-        f"Order value: ${order_value:,.2f}, forecast confidence: {forecast_confidence:.0%}."
+        f"Order value: ${order_value:,.2f} ({recommended_quantity} units @ "
+        f"${selected_vendor.get('unit_price', 0):.2f}/unit), "
+        f"forecast confidence: {forecast_confidence:.0%}."
     )
+
+    if approval_level == "executive":
+        reasoning += " Order exceeds $10,000 threshold - executive review required."
+    elif approval_level == "manager":
+        if order_value > APPROVAL_THRESHOLDS["auto_approve_max"]:
+            reasoning += " Order between $5,000-$10,000 - manager review required."
+        else:
+            reasoning += " Forecast confidence below 85% - manager review required."
 
     audit_entry = {
         "timestamp": datetime.now(UTC).isoformat(),
@@ -1057,6 +1066,8 @@ def human_approval(state: ProcurementState) -> dict[str, Any]:
         "inputs": {
             "order_value": order_value,
             "forecast_confidence": forecast_confidence,
+            "recommended_quantity": recommended_quantity,
+            "vendor": selected_vendor.get("vendor_name"),
         },
         "outputs": {
             "approval_required_level": approval_level,
@@ -1068,8 +1079,141 @@ def human_approval(state: ProcurementState) -> dict[str, Any]:
     return {
         "approval_status": ApprovalStatus.PENDING.value,
         "approval_required_level": approval_level,
+        "workflow_status": WorkflowStatus.AWAITING_APPROVAL.value,
         "updated_at": datetime.now(UTC).isoformat(),
         "audit_log": [audit_entry],
+    }
+
+
+def determine_approval_level(order_value: float, forecast_confidence: float) -> str:
+    """Determine the required approval level based on order value and confidence.
+
+    Approval rules from spec:
+    - <$5K with >85% confidence: Auto-approve ("auto")
+    - <$5K with 60-85% confidence: Manager review ("manager")
+    - $5K-$10K any confidence: Manager review ("manager")
+    - >$10K any confidence: Executive review ("executive")
+
+    Args:
+        order_value: Total order value in dollars
+        forecast_confidence: Forecast confidence score (0.0-1.0)
+
+    Returns:
+        Approval level: "auto", "manager", or "executive"
+    """
+    if order_value > APPROVAL_THRESHOLDS["executive_review"]:
+        return "executive"
+    elif (
+        order_value > APPROVAL_THRESHOLDS["auto_approve_max"]
+        or forecast_confidence < CONFIDENCE_THRESHOLDS["high"]
+    ):
+        return "manager"
+    else:
+        return "auto"
+
+
+def process_approval(
+    state: ProcurementState,
+    approved: bool,
+    reviewer_id: str,
+    feedback: str = "",
+) -> dict[str, Any]:
+    """Process a human approval or rejection decision.
+
+    This function is called after a human has reviewed a pending order
+    and made a decision. It updates the workflow state with the decision
+    and creates an audit trail entry.
+
+    Args:
+        state: Current procurement state (with approval_status=PENDING)
+        approved: True if the order is approved, False if rejected
+        reviewer_id: ID/email of the human reviewer
+        feedback: Optional feedback/reason for the decision
+
+    Returns:
+        Updated state with approval decision recorded
+    """
+    order_value = state.get("order_value", 0.0)
+    sku = state.get("sku", "")
+    approval_level = state.get("approval_required_level", "unknown")
+    recommended_quantity = state.get("recommended_quantity", 0)
+
+    if approved:
+        new_status = ApprovalStatus.APPROVED.value
+        action = "approve_order"
+        reasoning = (
+            f"Order for SKU {sku} approved by {reviewer_id}. "
+            f"Order value: ${order_value:,.2f}, quantity: {recommended_quantity}. "
+        )
+        if feedback:
+            reasoning += f"Reviewer feedback: {feedback}"
+        next_workflow_status = WorkflowStatus.GENERATING_PO.value
+    else:
+        new_status = ApprovalStatus.REJECTED.value
+        action = "reject_order"
+        reasoning = (
+            f"Order for SKU {sku} rejected by {reviewer_id}. "
+            f"Order value: ${order_value:,.2f}, quantity: {recommended_quantity}. "
+        )
+        if feedback:
+            reasoning += f"Reason: {feedback}"
+        else:
+            reasoning += "No reason provided."
+        next_workflow_status = WorkflowStatus.COMPLETED.value
+
+    audit_entry = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "agent": "human_approval",
+        "action": action,
+        "reasoning": reasoning,
+        "inputs": {
+            "approved": approved,
+            "reviewer_id": reviewer_id,
+            "feedback": feedback,
+            "approval_level": approval_level,
+        },
+        "outputs": {
+            "approval_status": new_status,
+            "workflow_status": next_workflow_status,
+        },
+        "confidence": None,
+    }
+
+    return {
+        "approval_status": new_status,
+        "human_feedback": feedback,
+        "reviewer_id": reviewer_id,
+        "workflow_status": next_workflow_status,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "audit_log": [audit_entry],
+    }
+
+
+def get_pending_approval_summary(state: ProcurementState) -> dict[str, Any]:
+    """Get a summary of a pending approval request.
+
+    This helper function extracts key information from a workflow state
+    that is awaiting human approval, formatted for display in an approval queue.
+
+    Args:
+        state: Procurement state with approval_status=PENDING
+
+    Returns:
+        Dictionary with summary information for the approval request
+    """
+    return {
+        "sku": state.get("sku", ""),
+        "sku_id": state.get("sku_id", ""),
+        "order_value": state.get("order_value", 0.0),
+        "recommended_quantity": state.get("recommended_quantity", 0),
+        "vendor": state.get("selected_vendor", {}),
+        "forecast_confidence": state.get("forecast_confidence", 0.0),
+        "approval_required_level": state.get("approval_required_level", ""),
+        "safety_stock": state.get("safety_stock", 0),
+        "reorder_point": state.get("reorder_point", 0),
+        "current_inventory": state.get("current_inventory", 0),
+        "created_at": state.get("created_at", ""),
+        "workflow_status": state.get("workflow_status", ""),
     }
 
 

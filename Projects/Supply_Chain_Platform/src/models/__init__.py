@@ -4,6 +4,7 @@ from src.models.distributor import Distributor
 from src.models.email_classification import EmailClassification
 from src.models.forecast import Forecast
 from src.models.inventory_event import InventoryEvent
+from src.models.procurement_workflow import ProcurementWorkflow
 from src.models.product import Product
 from src.models.warehouse import Warehouse
 
@@ -14,4 +15,5 @@ __all__ = [
     "InventoryEvent",
     "Forecast",
     "EmailClassification",
+    "ProcurementWorkflow",
 ]
