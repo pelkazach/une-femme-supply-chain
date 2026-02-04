@@ -774,3 +774,198 @@ class TestRedashSetupScriptRatios:
         client_class = module.RedashClient
         assert hasattr(client_class, "create_visualization")
         assert hasattr(client_class, "get_query")
+
+
+class TestRedashSetupScriptSlackNotification:
+    """Tests for Redash setup script Slack notification functionality."""
+
+    def test_script_has_setup_slack_notification_function(self):
+        """Test that script has setup_slack_notification function."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        assert hasattr(module, "setup_slack_notification")
+
+    def test_script_has_find_destination_by_name_function(self):
+        """Test that script has find_destination_by_name helper function."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        assert hasattr(module, "find_destination_by_name")
+
+    def test_script_has_find_subscription_by_destination_function(self):
+        """Test that script has find_subscription_by_destination helper function."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        assert hasattr(module, "find_subscription_by_destination")
+
+    def test_redash_client_has_destination_methods(self):
+        """Test that RedashClient has destination-related methods."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        client_class = module.RedashClient
+        assert hasattr(client_class, "get_destinations")
+        assert hasattr(client_class, "create_destination")
+        assert hasattr(client_class, "update_destination")
+        assert hasattr(client_class, "remove_alert_subscription")
+
+    def test_find_destination_by_name_finds_existing_destination(self):
+        """Test that find_destination_by_name finds a destination by name."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        destinations = [
+            {"id": 1, "name": "Email Alerts"},
+            {"id": 2, "name": "Slack - Supply Chain Alerts"},
+            {"id": 3, "name": "Webhook"},
+        ]
+        result = module.find_destination_by_name(destinations, "Slack - Supply Chain Alerts")
+        assert result is not None
+        assert result["id"] == 2
+
+    def test_find_destination_by_name_returns_none_for_missing(self):
+        """Test that find_destination_by_name returns None when destination not found."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        destinations = [
+            {"id": 1, "name": "Email Alerts"},
+            {"id": 2, "name": "Webhook"},
+        ]
+        result = module.find_destination_by_name(destinations, "Slack - Supply Chain Alerts")
+        assert result is None
+
+    def test_find_subscription_by_destination_finds_existing_subscription(self):
+        """Test that find_subscription_by_destination finds a subscription by destination ID."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        subscriptions = [
+            {"id": 1, "destination": {"id": 10, "name": "Email"}},
+            {"id": 2, "destination": {"id": 20, "name": "Slack"}},
+            {"id": 3, "destination": {"id": 30, "name": "Webhook"}},
+        ]
+        result = module.find_subscription_by_destination(subscriptions, 20)
+        assert result is not None
+        assert result["id"] == 2
+
+    def test_find_subscription_by_destination_returns_none_for_missing(self):
+        """Test that find_subscription_by_destination returns None when not found."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        subscriptions = [
+            {"id": 1, "destination": {"id": 10, "name": "Email"}},
+            {"id": 2, "destination": {"id": 20, "name": "Slack"}},
+        ]
+        result = module.find_subscription_by_destination(subscriptions, 99)
+        assert result is None
+
+    def test_find_subscription_by_destination_handles_missing_destination_key(self):
+        """Test that find_subscription_by_destination handles missing destination key."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        subscriptions = [
+            {"id": 1},  # No destination key
+            {"id": 2, "destination": None},  # None destination
+            {"id": 3, "destination": {"id": 30, "name": "Webhook"}},
+        ]
+        result = module.find_subscription_by_destination(subscriptions, 30)
+        assert result is not None
+        assert result["id"] == 3
+
+    def test_find_destination_by_name_empty_list(self):
+        """Test that find_destination_by_name handles empty list."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        result = module.find_destination_by_name([], "Any Name")
+        assert result is None
+
+    def test_find_subscription_by_destination_empty_list(self):
+        """Test that find_subscription_by_destination handles empty list."""
+        import importlib.util
+
+        script_path = Path(__file__).parent.parent / "scripts" / "setup_redash_dashboard.py"
+        spec = importlib.util.spec_from_file_location("setup_redash_dashboard", script_path)
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        result = module.find_subscription_by_destination([], 1)
+        assert result is None

@@ -626,6 +626,87 @@ class RedashClient:
         response.raise_for_status()
         return cast(list[dict[str, Any]], response.json())
 
+    def create_destination(
+        self,
+        name: str,
+        destination_type: str,
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create a new notification destination.
+
+        Args:
+            name: Destination name (e.g., "Slack - Supply Chain Alerts")
+            destination_type: Type of destination ("slack", "email", "webhook")
+            options: Destination-specific options:
+                - For Slack: {"url": "https://hooks.slack.com/services/..."}
+                - For Email: {"addresses": "email@example.com"}
+                - For Webhook: {"url": "https://..."}
+
+        Returns:
+            Created destination dictionary
+        """
+        response = httpx.post(
+            f"{self.base_url}/api/destinations",
+            headers=self.headers,
+            json={
+                "name": name,
+                "type": destination_type,
+                "options": options,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def update_destination(
+        self,
+        destination_id: int,
+        name: str | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Update an existing notification destination.
+
+        Args:
+            destination_id: ID of the destination to update
+            name: New destination name (optional)
+            options: New destination options (optional)
+
+        Returns:
+            Updated destination dictionary
+        """
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if options is not None:
+            payload["options"] = options
+
+        response = httpx.post(
+            f"{self.base_url}/api/destinations/{destination_id}",
+            headers=self.headers,
+            json=payload,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
+
+    def remove_alert_subscription(
+        self,
+        alert_id: int,
+        subscription_id: int,
+    ) -> None:
+        """Remove a subscription from an alert.
+
+        Args:
+            alert_id: ID of the alert
+            subscription_id: ID of the subscription to remove
+        """
+        response = httpx.delete(
+            f"{self.base_url}/api/alerts/{alert_id}/subscriptions/{subscription_id}",
+            headers=self.headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+
 
 def find_query_by_name(queries: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
     """Find a query by name.
@@ -676,6 +757,43 @@ def find_alert_by_name(
     for alert in alerts:
         if alert.get("name") == name:
             return alert
+    return None
+
+
+def find_destination_by_name(
+    destinations: list[dict[str, Any]], name: str
+) -> dict[str, Any] | None:
+    """Find a notification destination by name.
+
+    Args:
+        destinations: List of destination dictionaries
+        name: Destination name to find
+
+    Returns:
+        Destination dictionary if found, None otherwise
+    """
+    for dest in destinations:
+        if dest.get("name") == name:
+            return dest
+    return None
+
+
+def find_subscription_by_destination(
+    subscriptions: list[dict[str, Any]], destination_id: int
+) -> dict[str, Any] | None:
+    """Find a subscription by destination ID.
+
+    Args:
+        subscriptions: List of subscription dictionaries
+        destination_id: ID of the destination to find
+
+    Returns:
+        Subscription dictionary if found, None otherwise
+    """
+    for sub in subscriptions:
+        dest = sub.get("destination")
+        if dest and dest.get("id") == destination_id:
+            return sub
     return None
 
 
@@ -945,6 +1063,88 @@ def setup_stockout_alert(
             return None
 
 
+def setup_slack_notification(
+    client: RedashClient,
+    alert_id: int,
+    slack_webhook_url: str | None = None,
+) -> dict[str, Any] | None:
+    """Set up Slack notification for an alert.
+
+    Creates or updates a Slack destination and subscribes the alert to it.
+    The Slack webhook URL can be provided directly or via SLACK_WEBHOOK_URL
+    environment variable.
+
+    Args:
+        client: Redash API client
+        alert_id: ID of the alert to configure
+        slack_webhook_url: Slack incoming webhook URL (optional, uses env var if not provided)
+
+    Returns:
+        Subscription dictionary if successful, None if setup failed
+    """
+    # Get Slack webhook URL from parameter or environment
+    webhook_url = slack_webhook_url or os.environ.get("SLACK_WEBHOOK_URL")
+
+    if not webhook_url:
+        print("  Skipping Slack notification: SLACK_WEBHOOK_URL not configured")
+        print("  Set SLACK_WEBHOOK_URL environment variable to enable Slack alerts")
+        return None
+
+    destination_name = "Slack - Supply Chain Alerts"
+
+    # Check if destination already exists
+    existing_destinations = client.get_destinations()
+    existing_dest = find_destination_by_name(existing_destinations, destination_name)
+
+    if existing_dest:
+        print(f"  Slack destination already exists: {destination_name} (ID: {existing_dest['id']})")
+        # Update webhook URL if it changed
+        try:
+            client.update_destination(
+                destination_id=existing_dest["id"],
+                options={"url": webhook_url},
+            )
+            print("  Updated Slack webhook URL")
+        except httpx.HTTPStatusError as e:
+            print(f"  Warning: Could not update destination: {e}")
+        destination_id = existing_dest["id"]
+    else:
+        # Create new Slack destination
+        print(f"  Creating Slack destination: {destination_name}")
+        try:
+            dest = client.create_destination(
+                name=destination_name,
+                destination_type="slack",
+                options={"url": webhook_url},
+            )
+            destination_id = dest["id"]
+            print(f"  Created Slack destination with ID: {destination_id}")
+        except httpx.HTTPStatusError as e:
+            print(f"  Error creating Slack destination: {e.response.status_code} - {e.response.text}")
+            return None
+
+    # Check if alert is already subscribed to this destination
+    existing_subscriptions = client.get_alert_subscriptions(alert_id)
+    existing_sub = find_subscription_by_destination(existing_subscriptions, destination_id)
+
+    if existing_sub:
+        print(f"  Alert already subscribed to Slack destination (subscription ID: {existing_sub['id']})")
+        return existing_sub
+
+    # Subscribe alert to Slack destination
+    print("  Subscribing alert to Slack destination...")
+    try:
+        subscription = client.add_alert_subscription(
+            alert_id=alert_id,
+            destination_id=destination_id,
+        )
+        print(f"  Created subscription with ID: {subscription['id']}")
+        return subscription
+    except httpx.HTTPStatusError as e:
+        print(f"  Error creating subscription: {e.response.status_code} - {e.response.text}")
+        return None
+
+
 def setup_doh_dashboard(
     client: RedashClient, query_ids: dict[str, int]
 ) -> dict[str, Any]:
@@ -1039,6 +1239,12 @@ def main() -> int:
         stockout_alert = setup_stockout_alert(client, data_source["id"])
         if stockout_alert:
             print(f"Stock-Out Alert ID: {stockout_alert['id']}")
+
+            # Set up Slack notification for the alert
+            print("\nSetting up Slack notification...")
+            slack_sub = setup_slack_notification(client, stockout_alert["id"])
+            if slack_sub:
+                print("Slack notification configured successfully")
         else:
             print("Warning: Stock-out alert setup failed or skipped")
 
@@ -1048,7 +1254,7 @@ def main() -> int:
         print("2. Add visualizations (charts) to the queries")
         print("3. Add the visualizations to the dashboard")
         print("4. Set up auto-refresh schedule (5 minutes)")
-        print("5. Configure Slack/email notification destinations for alerts")
+        print("5. Set SLACK_WEBHOOK_URL environment variable if not already configured")
 
         return 0
 

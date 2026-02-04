@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 25
+- Completed: 26
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -174,9 +174,11 @@
   - Completed: 2026-02-03
   - Notes: Created SQL query (stockout_alert.sql) that returns SKUs with DOH_T30 < 14 days. Added alert API methods to RedashClient (get_alerts, get_alert, create_alert, update_alert, get_alert_subscriptions, add_alert_subscription, get_destinations). Created setup_stockout_alert() function that: 1) Creates/updates the alert query, 2) Creates/updates the alert with custom subject/body. Alert rearms after 1 hour to prevent spam. 21 new tests covering SQL syntax, query content, helper functions, and API methods.
 
-- [ ] **Task 1.6.6**: Configure Slack notification for alerts
+- [x] **Task 1.6.6**: Configure Slack notification for alerts
   - Spec: specs/06-dashboard-alerting.md
   - Acceptance: Slack message sent when alert fires
+  - Completed: 2026-02-03
+  - Notes: Added Slack notification support to Redash setup script. Created create_destination() and update_destination() methods in RedashClient for managing notification destinations. Created find_destination_by_name() and find_subscription_by_destination() helper functions. Created setup_slack_notification() function that creates/updates Slack webhook destination and subscribes alerts to it. Updated main() to configure Slack notification after creating stock-out alert. Uses SLACK_WEBHOOK_URL environment variable for webhook URL. 12 new tests covering helper functions and API methods.
 
 - [ ] **Task 1.6.7**: Configure email notification for alerts
   - Spec: specs/06-dashboard-alerting.md
