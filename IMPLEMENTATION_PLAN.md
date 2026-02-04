@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 50
-- Completed: 46
+- Completed: 47
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -296,9 +296,11 @@
   - Completed: 2026-02-04
   - Notes: Created src/services/workflow_orchestrator.py with start_workflow() and resume_workflow() functions for interrupt/resume cycle. Added PostgresSaver checkpointer support (langgraph-checkpoint-postgres dependency). The human_approval node sets approval_required_level based on order value thresholds: >$10K requires executive approval, $5K-$10K requires manager approval, <$5K with <85% confidence requires manager review. Workflow interrupt occurs when routing to human_approval node via interrupt_before=["run_approval"]. process_approval() handles approval/rejection decisions and updates audit trail. API endpoints in src/api/approval.py provide approval queue, stats, and decision submission. 178 tests covering workflow interrupt/resume cycle, approval thresholds, and audit trail persistence.
 
-- [ ] **Task 3.1.5**: Create audit trail logging
+- [x] **Task 3.1.5**: Create audit trail logging
   - Spec: specs/09-agentic-automation.md
   - Acceptance: All agent decisions logged with reasoning
+  - Completed: 2026-02-04
+  - Notes: Created AgentAuditLog SQLAlchemy model for normalized audit storage with full searchability (by workflow, agent, action, SKU, confidence, time range). Created Alembic migration (d4e5f6g7h8i9) for agent_audit_logs table with composite indexes for common queries and partial index for low-confidence decisions (<0.85). Created src/services/audit_logging.py with functions: log_agent_decision(), log_audit_entries_from_state(), get_audit_logs(), get_workflow_audit_trail(), get_low_confidence_decisions(), get_audit_stats(), count_audit_logs(), delete_old_audit_logs(), get_agent_decision_summary(). Created src/api/audit.py with REST endpoints: GET /audit/logs (paginated list with filters), GET /audit/logs/{id}, GET /audit/workflow/{id} (full trail), GET /audit/stats, GET /audit/low-confidence, GET /audit/agents/{agent}/summary, GET /audit/agents, GET /audit/actions. 46 tests covering model, service, and API functionality.
 
 ### Priority 3.2: QuickBooks Integration
 - [ ] **Task 3.2.1**: Implement QuickBooks OAuth 2.0 flow
