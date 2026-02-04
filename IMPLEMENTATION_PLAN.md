@@ -2,7 +2,7 @@
 
 ## Status
 - Total tasks: 42
-- Completed: 11
+- Completed: 12
 - In progress: 0
 
 ## Phase 1: Foundation (P0 - MVP)
@@ -75,9 +75,11 @@
   - Completed: 2026-02-03
   - Notes: Created parse_velocity_report() function that extracts depletion rates (units_per_day) from WineDirect velocity reports for 30/60/90 day periods. Handles multiple response formats (skus/data/items keys, direct list), alternative field names (velocity, rate, depletion_rate), and calculates missing rate/total from available data. Added GET /inventory/velocity endpoint returning VelocityResponse with SkuVelocity list, and GET /inventory/velocity/{sku} for single SKU lookup. VelocityPeriod IntEnum used for type-safe period validation. 20 new tests covering parsing and endpoints.
 
-- [ ] **Task 1.3.5**: Create daily sync job with Celery
+- [x] **Task 1.3.5**: Create daily sync job with Celery
   - Spec: specs/02-winedirect-integration.md
   - Acceptance: Job runs daily, inserts data into inventory_events
+  - Completed: 2026-02-03
+  - Notes: Created Celery app (src/celery_app.py) with Redis broker and beat schedule for daily sync at 6 AM UTC. Implemented sync_winedirect_inventory task (src/tasks/winedirect_sync.py) that: 1) Fetches sellable inventory positions and creates snapshot events, 2) Fetches depletion events from last 24 hours and creates depletion events. Task has automatic retry (3 retries, 5 min delay) on API errors. Creates/uses WINEDIRECT warehouse. 17 tests covering sync functions, helper functions, and Celery task execution.
 
 ### Priority 1.4: Distributor File Processing
 - [ ] **Task 1.4.1**: Create file upload API endpoint
