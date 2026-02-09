@@ -24,6 +24,16 @@ app.include_router(review_router)
 app.include_router(upload_router)
 
 
+@app.get("/")
+async def root() -> dict[str, str]:
+    """Root endpoint."""
+    return {
+        "name": "Une Femme Supply Chain Platform",
+        "version": "0.1.0",
+        "docs": "/docs",
+    }
+
+
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Health check endpoint."""
