@@ -64,5 +64,13 @@ celery_app.conf.update(
             "kwargs": {"direction": "bidirectional"},
             "options": {"queue": "default"},
         },
+        "sync-quickbooks-invoices-daily": {
+            "task": "src.tasks.quickbooks_sync.sync_quickbooks_invoices",
+            # Run daily at 8 AM UTC to pull invoices from QuickBooks
+            # Per spec: Invoices synced daily from QBO → Platform
+            "schedule": crontab(hour=8, minute=0),
+            "kwargs": {"days_back": 1},
+            "options": {"queue": "default"},
+        },
     },
 )

@@ -7,6 +7,7 @@ from src.models.forecast import Forecast
 from src.models.inventory_event import InventoryEvent
 from src.models.procurement_workflow import ProcurementWorkflow
 from src.models.product import Product
+from src.models.qb_invoice import QBInvoice, QBInvoiceLineItem
 from src.models.warehouse import Warehouse
 
 __all__ = [
@@ -18,4 +19,6 @@ __all__ = [
     "Forecast",
     "EmailClassification",
     "ProcurementWorkflow",
+    "QBInvoice",
+    "QBInvoiceLineItem",
 ]
