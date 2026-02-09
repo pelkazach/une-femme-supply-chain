@@ -5,6 +5,7 @@ import { getDOHStatus } from "@/components/shared/kpi-card"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { unitsToCases } from "@/components/shared/kpi-card"
 import { AlertTriangle, Bell } from "lucide-react"
 
 const skuLabels: Record<string, string> = {
@@ -73,7 +74,7 @@ export default function AlertsPage() {
                         {sku.doh.doh_t30 !== null
                           ? `${Math.round(sku.doh.doh_t30)} days on hand`
                           : "No DOH data"}{" "}
-                        — {sku.doh.current_inventory.toLocaleString()} units
+                        — {sku.doh.current_inventory.toLocaleString()} units ({unitsToCases(sku.doh.current_inventory).toLocaleString()} cs)
                       </p>
                     </div>
                   </div>

@@ -88,13 +88,13 @@ export function ShipDepChart({ skus }: ShipDepChartProps) {
               />
               <ReferenceLine
                 y={2.0}
-                stroke="#3b82f6"
+                stroke="#8b5cf6"
                 strokeDasharray="4 4"
                 strokeWidth={1}
                 label={{
                   value: "High (2.0)",
                   position: "right",
-                  fill: "#3b82f6",
+                  fill: "#8b5cf6",
                   fontSize: 10,
                 }}
               />

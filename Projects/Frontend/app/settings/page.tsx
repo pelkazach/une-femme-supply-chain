@@ -18,8 +18,8 @@ export default function SettingsPage() {
   })
 
   const themes = [
-    { value: "dark", label: "Dark", icon: Moon },
     { value: "light", label: "Light", icon: Sun },
+    { value: "dark", label: "Dark", icon: Moon },
     { value: "system", label: "System", icon: Monitor },
   ] as const
 

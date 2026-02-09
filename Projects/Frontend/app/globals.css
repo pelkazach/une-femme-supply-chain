@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  /* Wine-brand custom colors */
+  /* Brand accent colors (purple · teal · green) */
   --color-surface: var(--surface);
   --color-surface-elevated: var(--surface-elevated);
   --color-border-active: var(--border-active);
@@ -18,9 +18,9 @@
   --color-text-secondary: var(--text-secondary);
   --color-text-muted: var(--text-muted);
 
-  /* Typography */
+  /* Typography — clean sans-serif for techy feel */
   --font-sans: var(--font-inter);
-  --font-heading: var(--font-playfair-display);
+  --font-heading: var(--font-inter);
   --font-mono: var(--font-ibm-plex-mono);
 
   /* shadcn semantic color mappings */
@@ -60,12 +60,12 @@
   --spacing-card: 24px;
   --spacing-section: 32px;
 
-  /* Shadows — elevated surfaces */
-  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.3);
-  --shadow-elevated: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
-  --shadow-glow-gold: 0 0 12px 0 rgb(212 175 55 / 0.15);
+  /* Shadows — Stripe-style refined layers */
+  --shadow-card: 0 2px 5px 0 rgb(50 50 93 / 0.04), 0 1px 2px 0 rgb(0 0 0 / 0.04);
+  --shadow-elevated: 0 13px 27px -5px rgb(50 50 93 / 0.1), 0 8px 16px -8px rgb(0 0 0 / 0.08);
+  --shadow-glow-gold: 0 0 15px 0 rgb(99 91 255 / 0.12);
 
-  /* Radius */
+  /* Radius — generous for modern feel */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -75,101 +75,105 @@
   --radius-4xl: calc(var(--radius) + 16px);
 }
 
-/* Light theme (not primary — app defaults to dark) */
+/* ─── Light theme (default · Stripe-inspired) ─────────────────────── */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(0.985 0.003 87);
-  --foreground: oklch(0.168 0 0);
+  --radius: 0.75rem;
+  --background: oklch(0.978 0.004 260);
+  --foreground: oklch(0.22 0.035 255);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.168 0 0);
+  --card-foreground: oklch(0.22 0.035 255);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.168 0 0);
-  --primary: oklch(0.767 0.139 91.059);
-  --primary-foreground: oklch(0.168 0 0);
-  --secondary: oklch(0.95 0.005 87);
-  --secondary-foreground: oklch(0.168 0 0);
-  --muted: oklch(0.95 0.005 87);
-  --muted-foreground: oklch(0.528 0 0);
-  --accent: oklch(0.95 0.005 87);
-  --accent-foreground: oklch(0.168 0 0);
-  --destructive: oklch(0.401 0.095 15.089);
-  --border: oklch(0.9 0.005 87);
-  --input: oklch(0.9 0.005 87);
-  --ring: oklch(0.767 0.139 91.059);
-  --chart-1: oklch(0.767 0.139 91.059);
-  --chart-2: oklch(0.401 0.095 15.089);
-  --chart-3: oklch(0.599 0.137 126.322);
-  --chart-4: oklch(0.819 0.139 91.281);
-  --chart-5: oklch(0.461 0.111 14.960);
-  --sidebar: oklch(0.97 0.003 87);
-  --sidebar-foreground: oklch(0.168 0 0);
-  --sidebar-primary: oklch(0.767 0.139 91.059);
-  --sidebar-primary-foreground: oklch(0.168 0 0);
-  --sidebar-accent: oklch(0.95 0.005 87);
-  --sidebar-accent-foreground: oklch(0.168 0 0);
-  --sidebar-border: oklch(0.9 0.005 87);
-  --sidebar-ring: oklch(0.767 0.139 91.059);
+  --popover-foreground: oklch(0.22 0.035 255);
+  --primary: oklch(0.541 0.25 264);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.955 0.008 260);
+  --secondary-foreground: oklch(0.30 0.03 255);
+  --muted: oklch(0.94 0.006 260);
+  --muted-foreground: oklch(0.55 0.015 255);
+  --accent: oklch(0.96 0.018 270);
+  --accent-foreground: oklch(0.40 0.15 264);
+  --destructive: oklch(0.55 0.2 25);
+  --border: oklch(0.915 0.006 260);
+  --input: oklch(0.915 0.006 260);
+  --ring: oklch(0.541 0.25 264);
 
-  /* Wine-brand tokens */
-  --surface: oklch(0.97 0.003 87);
+  /* Chart palette: purple · teal · blue · green · indigo */
+  --chart-1: oklch(0.541 0.25 264);
+  --chart-2: oklch(0.70 0.15 175);
+  --chart-3: oklch(0.55 0.20 250);
+  --chart-4: oklch(0.65 0.17 155);
+  --chart-5: oklch(0.45 0.22 270);
+
+  /* Sidebar */
+  --sidebar: oklch(0.99 0.002 265);
+  --sidebar-foreground: oklch(0.30 0.03 255);
+  --sidebar-primary: oklch(0.541 0.25 264);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.955 0.02 268);
+  --sidebar-accent-foreground: oklch(0.40 0.15 264);
+  --sidebar-border: oklch(0.925 0.005 260);
+  --sidebar-ring: oklch(0.541 0.25 264);
+
+  /* Brand accent tokens */
+  --surface: oklch(0.965 0.004 260);
   --surface-elevated: oklch(1 0 0);
-  --border-active: oklch(0.85 0.005 87);
-  --gold: oklch(0.767 0.139 91.059);
-  --gold-hover: oklch(0.819 0.139 91.281);
-  --burgundy: oklch(0.401 0.095 15.089);
-  --burgundy-hover: oklch(0.461 0.111 14.960);
-  --olive: oklch(0.599 0.137 126.322);
-  --cream: oklch(0.959 0.013 86.830);
-  --text-secondary: oklch(0.528 0 0);
-  --text-muted: oklch(0.45 0 0);
+  --border-active: oklch(0.80 0.06 264);
+  --gold: oklch(0.541 0.25 264);
+  --gold-hover: oklch(0.48 0.25 264);
+  --burgundy: oklch(0.70 0.15 175);
+  --burgundy-hover: oklch(0.62 0.15 175);
+  --olive: oklch(0.65 0.17 155);
+  --cream: oklch(0.978 0.004 260);
+  --text-secondary: oklch(0.50 0.01 255);
+  --text-muted: oklch(0.60 0.01 255);
 }
 
-/* Dark theme — wine brand (default) */
+/* ─── Dark theme (matching palette) ───────────────────────────────── */
 .dark {
-  --background: oklch(0.168 0 0);
-  --foreground: oklch(0.959 0.013 86.830);
-  --card: oklch(0.218 0 0);
-  --card-foreground: oklch(0.959 0.013 86.830);
-  --popover: oklch(0.218 0 0);
-  --popover-foreground: oklch(0.959 0.013 86.830);
-  --primary: oklch(0.767 0.139 91.059);
-  --primary-foreground: oklch(0.168 0 0);
-  --secondary: oklch(0.260 0 0);
-  --secondary-foreground: oklch(0.959 0.013 86.830);
-  --muted: oklch(0.260 0 0);
-  --muted-foreground: oklch(0.528 0 0);
-  --accent: oklch(0.260 0 0);
-  --accent-foreground: oklch(0.959 0.013 86.830);
-  --destructive: oklch(0.461 0.111 14.960);
-  --border: oklch(0.285 0 0);
-  --input: oklch(0.285 0 0);
-  --ring: oklch(0.767 0.139 91.059);
-  --chart-1: oklch(0.767 0.139 91.059);
-  --chart-2: oklch(0.401 0.095 15.089);
-  --chart-3: oklch(0.599 0.137 126.322);
-  --chart-4: oklch(0.819 0.139 91.281);
-  --chart-5: oklch(0.461 0.111 14.960);
-  --sidebar: oklch(0.218 0 0);
-  --sidebar-foreground: oklch(0.959 0.013 86.830);
-  --sidebar-primary: oklch(0.767 0.139 91.059);
-  --sidebar-primary-foreground: oklch(0.168 0 0);
-  --sidebar-accent: oklch(0.260 0 0);
-  --sidebar-accent-foreground: oklch(0.959 0.013 86.830);
-  --sidebar-border: oklch(0.285 0 0);
-  --sidebar-ring: oklch(0.767 0.139 91.059);
+  --background: oklch(0.145 0.02 260);
+  --foreground: oklch(0.93 0.008 260);
+  --card: oklch(0.195 0.02 260);
+  --card-foreground: oklch(0.93 0.008 260);
+  --popover: oklch(0.195 0.02 260);
+  --popover-foreground: oklch(0.93 0.008 260);
+  --primary: oklch(0.62 0.24 264);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.24 0.015 260);
+  --secondary-foreground: oklch(0.93 0.008 260);
+  --muted: oklch(0.24 0.015 260);
+  --muted-foreground: oklch(0.55 0.01 260);
+  --accent: oklch(0.26 0.025 268);
+  --accent-foreground: oklch(0.75 0.20 264);
+  --destructive: oklch(0.50 0.18 20);
+  --border: oklch(0.28 0.015 260);
+  --input: oklch(0.28 0.015 260);
+  --ring: oklch(0.62 0.24 264);
+  --chart-1: oklch(0.62 0.24 264);
+  --chart-2: oklch(0.70 0.15 175);
+  --chart-3: oklch(0.60 0.18 250);
+  --chart-4: oklch(0.65 0.17 155);
+  --chart-5: oklch(0.50 0.20 270);
+  --sidebar: oklch(0.17 0.02 260);
+  --sidebar-foreground: oklch(0.90 0.005 260);
+  --sidebar-primary: oklch(0.62 0.24 264);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.24 0.025 268);
+  --sidebar-accent-foreground: oklch(0.75 0.20 264);
+  --sidebar-border: oklch(0.28 0.015 260);
+  --sidebar-ring: oklch(0.62 0.24 264);
 
-  /* Wine-brand tokens */
-  --surface: oklch(0.218 0 0);
-  --surface-elevated: oklch(0.260 0 0);
-  --border-active: oklch(0.348 0 0);
-  --gold: oklch(0.767 0.139 91.059);
-  --gold-hover: oklch(0.819 0.139 91.281);
-  --burgundy: oklch(0.401 0.095 15.089);
-  --burgundy-hover: oklch(0.461 0.111 14.960);
-  --olive: oklch(0.599 0.137 126.322);
-  --cream: oklch(0.959 0.013 86.830);
-  --text-secondary: oklch(0.783 0 0);
-  --text-muted: oklch(0.528 0 0);
+  /* Brand accent tokens */
+  --surface: oklch(0.195 0.02 260);
+  --surface-elevated: oklch(0.24 0.015 260);
+  --border-active: oklch(0.40 0.06 264);
+  --gold: oklch(0.62 0.24 264);
+  --gold-hover: oklch(0.68 0.22 264);
+  --burgundy: oklch(0.70 0.15 175);
+  --burgundy-hover: oklch(0.75 0.13 175);
+  --olive: oklch(0.65 0.17 155);
+  --cream: oklch(0.93 0.008 260);
+  --text-secondary: oklch(0.70 0.008 260);
+  --text-muted: oklch(0.50 0.01 260);
 }
 
 @layer base {
@@ -181,7 +185,9 @@
     font-family: var(--font-sans), system-ui, sans-serif;
   }
   h1, h2, h3, h4, h5, h6 {
-    font-family: var(--font-heading), Georgia, serif;
+    font-family: var(--font-heading), system-ui, sans-serif;
+    letter-spacing: -0.025em;
+    font-weight: 600;
   }
 }
 

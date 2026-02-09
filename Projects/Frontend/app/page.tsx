@@ -79,6 +79,7 @@ export default function DashboardPage() {
                   key={sku.sku}
                   label={skuLabels[sku.sku] ?? sku.sku}
                   value={sku.doh.current_inventory}
+                  showCases
                   subtitle={
                     doh !== null
                       ? `${Math.round(doh)} days on hand (T30)`

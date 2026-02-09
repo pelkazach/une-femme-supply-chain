@@ -224,7 +224,7 @@ export default function ForecastPage() {
                   <Line
                     type="monotone"
                     dataKey="actual"
-                    stroke="#3b82f6"
+                    stroke="#635bff"
                     strokeWidth={2}
                     dot={false}
                     connectNulls={false}
@@ -233,7 +233,7 @@ export default function ForecastPage() {
                   <Line
                     type="monotone"
                     dataKey="forecast"
-                    stroke="#f97316"
+                    stroke="#10b981"
                     strokeWidth={2}
                     strokeDasharray="6 3"
                     dot={false}
@@ -246,11 +246,11 @@ export default function ForecastPage() {
             {/* Legend */}
             <div className="mt-4 flex flex-wrap justify-center gap-4 text-xs text-muted-foreground">
               <div className="flex items-center gap-1.5">
-                <span className="h-0.5 w-4 bg-blue-500" />
+                <span className="h-0.5 w-4 bg-[#635bff]" />
                 Actuals
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="h-0.5 w-4 border-t-2 border-dashed border-orange-500" />
+                <span className="h-0.5 w-4 border-t-2 border-dashed border-emerald-500" />
                 Forecast
               </div>
               <div className="flex items-center gap-1.5">

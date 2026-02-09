@@ -53,9 +53,9 @@ export function VelocityTrends({ skus }: VelocityTrendsProps) {
                 </div>
                 <div className="flex items-center gap-1.5">
                   {isAccelerating ? (
-                    <TrendingUp className="h-4 w-4 text-red-500" />
+                    <TrendingUp className="h-4 w-4 text-rose-500" />
                   ) : isDecelerating ? (
-                    <TrendingDown className="h-4 w-4 text-green-500" />
+                    <TrendingDown className="h-4 w-4 text-emerald-500" />
                   ) : (
                     <Minus className="h-4 w-4 text-muted-foreground" />
                   )}
@@ -63,9 +63,9 @@ export function VelocityTrends({ skus }: VelocityTrendsProps) {
                     className={cn(
                       "font-data text-sm font-medium",
                       isAccelerating
-                        ? "text-red-500"
+                        ? "text-rose-500"
                         : isDecelerating
-                          ? "text-green-500"
+                          ? "text-emerald-500"
                           : "text-muted-foreground"
                     )}
                   >

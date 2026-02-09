@@ -11,10 +11,23 @@ import {
 
 export type DOHStatus = "critical" | "warning" | "healthy" | "overstocked" | "no-data"
 
+/** 12 bottles per case (250ml format) */
+export const UNITS_PER_CASE = 12
+
+export function unitsToCases(units: number): number {
+  return Math.floor(units / UNITS_PER_CASE)
+}
+
+export function formatUnitsAndCases(units: number): string {
+  return `${units.toLocaleString()} units (${unitsToCases(units).toLocaleString()} cs)`
+}
+
 export interface KpiCardProps {
   label: string
   value: string | number
   subtitle?: string
+  /** When true, shows "X units (Y cs)" instead of just the number */
+  showCases?: boolean
   delta?: number | null
   deltaLabel?: string
   status?: DOHStatus
@@ -34,13 +47,13 @@ const statusConfig: Record<DOHStatus, { label: string; className: string; dotCla
   },
   healthy: {
     label: "Healthy",
-    className: "bg-green-500/10 text-green-500",
-    dotClass: "bg-green-500",
+    className: "bg-emerald-500/10 text-emerald-500",
+    dotClass: "bg-emerald-500",
   },
   overstocked: {
     label: "Overstocked",
-    className: "bg-blue-500/10 text-blue-500",
-    dotClass: "bg-blue-500",
+    className: "bg-violet-500/10 text-violet-500",
+    dotClass: "bg-violet-500",
   },
   "no-data": {
     label: "No Data",
@@ -52,9 +65,9 @@ const statusConfig: Record<DOHStatus, { label: string; className: string; dotCla
 const statusColorMap: Record<DOHStatus, string> = {
   critical: "#ef4444",
   warning: "#f59e0b",
-  healthy: "#22c55e",
-  overstocked: "#3b82f6",
-  "no-data": "#6b6b6b",
+  healthy: "#10b981",
+  overstocked: "#8b5cf6",
+  "no-data": "#94a3b8",
 }
 
 export function getDOHStatus(doh: number | null): DOHStatus {
@@ -69,6 +82,7 @@ export function KpiCard({
   label,
   value,
   subtitle,
+  showCases,
   delta,
   deltaLabel,
   status = "no-data",
@@ -97,6 +111,11 @@ export function KpiCard({
         <div>
           <p className="font-data text-2xl font-semibold text-foreground">
             {typeof value === "number" ? value.toLocaleString() : value}
+            {showCases && typeof value === "number" && (
+              <span className="ml-1.5 text-sm font-medium text-muted-foreground">
+                ({unitsToCases(value).toLocaleString()} cs)
+              </span>
+            )}
           </p>
           {subtitle && (
             <p className="text-xs text-muted-foreground">{subtitle}</p>

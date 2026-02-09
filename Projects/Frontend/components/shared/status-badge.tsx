@@ -18,11 +18,11 @@ const config: Record<DOHStatus, { label: string; className: string }> = {
   },
   healthy: {
     label: "Healthy",
-    className: "bg-green-500/10 text-green-500 border-green-500/20",
+    className: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
   },
   overstocked: {
     label: "Overstocked",
-    className: "bg-blue-500/10 text-blue-500 border-blue-500/20",
+    className: "bg-violet-500/10 text-violet-500 border-violet-500/20",
   },
   "no-data": {
     label: "No Data",
@@ -47,16 +47,16 @@ function StatusIcon({ status }: { status: DOHStatus }) {
             height: 0,
             borderLeft: "5px solid transparent",
             borderRight: "5px solid transparent",
-            borderBottom: "8px solid #f59e0b",
+            borderBottom: "8px solid #f59e0b",  /* amber-500 */
           }}
         />
       )
     case "healthy":
       // Circle
-      return <span className={cn(size, "rounded-full bg-green-500")} />
+      return <span className={cn(size, "rounded-full bg-emerald-500")} />
     case "overstocked":
       // Diamond (rotated square)
-      return <span className={cn("h-2 w-2 rotate-45 bg-blue-500")} />
+      return <span className={cn("h-2 w-2 rotate-45 bg-violet-500")} />
     case "no-data":
       // Dash
       return <span className="inline-block h-0.5 w-2.5 bg-muted-foreground" />

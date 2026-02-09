@@ -5,10 +5,12 @@ import { useDropzone } from "react-dropzone"
 import { useMutation } from "@tanstack/react-query"
 import { apiClient } from "@/lib/api-client"
 import type { UploadResponse } from "@/lib/api-types"
+import { getDemoUploadHistory, type UploadHistoryEntry } from "@/lib/demo-data"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { Upload, FileText, CheckCircle2, XCircle, Loader2 } from "lucide-react"
+import { Upload, FileText, CheckCircle2, XCircle, Loader2, Clock, AlertTriangle } from "lucide-react"
 
 const ACCEPTED_TYPES = {
   "text/csv": [".csv"],
@@ -25,11 +27,18 @@ const DISTRIBUTORS = [
   { value: "winebow", label: "Winebow" },
 ]
 
+const statusColors: Record<string, string> = {
+  completed: "text-green-400",
+  partial: "text-amber-400",
+  failed: "text-red-400",
+}
+
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null)
   const [distributor, setDistributor] = useState("")
   const [progress, setProgress] = useState(0)
   const [fileError, setFileError] = useState<string | null>(null)
+  const [history] = useState<UploadHistoryEntry[]>(() => getDemoUploadHistory())
 
   const uploadMutation = useMutation({
     mutationFn: async (formData: FormData) => {
@@ -269,7 +278,7 @@ export default function UploadPage() {
                           {err.row}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {err.field ?? "—"}
+                          {err.field ?? "\u2014"}
                         </td>
                         <td className="px-3 py-2 text-foreground">
                           {err.message}
@@ -287,6 +296,64 @@ export default function UploadPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Recent upload history */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            Recent Uploads
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {history.map((entry) => (
+              <div
+                key={entry.id}
+                className="flex items-start justify-between rounded-lg border border-border px-4 py-3"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-elevated">
+                    <FileText className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {entry.filename}
+                    </p>
+                    <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+                      <Badge variant="outline" className="text-xs">
+                        {entry.distributor}
+                      </Badge>
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {new Date(entry.uploaded_at).toLocaleDateString()}
+                      </span>
+                      <span>by {entry.uploaded_by}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-3 text-xs">
+                  <div className="text-right">
+                    <p className="font-data text-foreground">
+                      {entry.success_count}/{entry.total_rows} rows
+                    </p>
+                    {entry.error_count > 0 && (
+                      <p className="flex items-center gap-1 text-amber-400">
+                        <AlertTriangle className="h-3 w-3" />
+                        {entry.error_count} errors
+                      </p>
+                    )}
+                  </div>
+                  <span className={cn("font-medium", statusColors[entry.status])}>
+                    {entry.status === "completed" && <CheckCircle2 className="h-4 w-4" />}
+                    {entry.status === "partial" && <AlertTriangle className="h-4 w-4" />}
+                    {entry.status === "failed" && <XCircle className="h-4 w-4" />}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }

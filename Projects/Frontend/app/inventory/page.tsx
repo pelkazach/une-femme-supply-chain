@@ -8,6 +8,7 @@ import { getDOHStatus } from "@/components/shared/kpi-card"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { KpiCardSkeleton } from "@/components/shared/skeletons"
+import { unitsToCases } from "@/components/shared/kpi-card"
 import { Package, ArrowRight } from "lucide-react"
 
 const skuLabels: Record<string, string> = {
@@ -80,6 +81,9 @@ export default function InventoryPage() {
                     <CardContent>
                       <p className="font-data text-2xl font-semibold text-foreground">
                         {total.toLocaleString()}
+                        <span className="ml-1.5 text-sm font-medium text-muted-foreground">
+                          ({unitsToCases(total).toLocaleString()} cs)
+                        </span>
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {skuDescriptions[sku] ?? sku}

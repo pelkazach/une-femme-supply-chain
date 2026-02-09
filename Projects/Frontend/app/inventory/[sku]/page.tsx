@@ -25,6 +25,7 @@ import { AllCommunityModule, ModuleRegistry, themeQuartz } from "ag-grid-communi
 import type { ColDef } from "ag-grid-community"
 import type { DepletionEvent } from "@/lib/api-types"
 import { TableSkeleton } from "@/components/shared/skeletons"
+import { unitsToCases } from "@/components/shared/kpi-card"
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -195,6 +196,9 @@ export default function InventoryDetailPage({
               <p className="text-xs text-muted-foreground">Current Inventory</p>
               <p className="font-data text-xl font-semibold text-foreground">
                 {metrics.doh.current_inventory.toLocaleString()}
+                <span className="ml-1 text-sm font-medium text-muted-foreground">
+                  ({unitsToCases(metrics.doh.current_inventory).toLocaleString()} cs)
+                </span>
               </p>
             </CardContent>
           </Card>
